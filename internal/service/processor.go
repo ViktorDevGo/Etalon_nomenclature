@@ -200,10 +200,12 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	}
 
 	if len(allRows) == 0 {
-		p.logger.Warn("No data extracted from attachments",
-			zap.String("message_id", email.MessageID))
-		// Still mark as processed to avoid reprocessing
-		return p.db.MarkEmailAsProcessed(ctx, email.MessageID)
+		p.logger.Error("No data extracted from attachments - NOT marking as processed",
+			zap.String("message_id", email.MessageID),
+			zap.String("subject", email.Subject),
+			zap.String("from", email.From))
+		// DO NOT mark as processed - we want to retry when parser is fixed
+		return fmt.Errorf("failed to extract any data from attachments")
 	}
 
 	// Insert data and mark as processed in a transaction

@@ -68,6 +68,9 @@ func (p *Parser) Parse(content []byte, filename string) ([]db.NomenclatureRow, e
 	}
 
 	if len(allRows) == 0 {
+		p.logger.Error("No valid data found in any sheet",
+			zap.String("filename", filename),
+			zap.Int("total_sheets", len(sheets)))
 		return nil, fmt.Errorf("no valid data found in any sheet")
 	}
 
@@ -144,7 +147,7 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 	}
 
 	// Log found columns for debugging
-	p.logger.Debug("Checking row for headers",
+	p.logger.Info("Checking row for headers",
 		zap.Strings("columns", cols))
 
 	for i, col := range cols {
@@ -174,6 +177,14 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		mapping.sizeModel >= 0 &&
 		mapping.nomenclature >= 0 &&
 		mapping.mrc >= 0 {
+		p.logger.Info("Successfully found all required columns",
+			zap.Int("article", mapping.article),
+			zap.Int("brand", mapping.brand),
+			zap.Int("sizeModel", mapping.sizeModel),
+			zap.Int("nomenclature", mapping.nomenclature),
+			zap.Int("mrc", mapping.mrc),
+			zap.Int("type", mapping.typ),
+			zap.Bool("hasType", mapping.hasType))
 		return mapping
 	}
 
@@ -196,7 +207,7 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 	}
 
 	if len(missing) > 0 {
-		p.logger.Debug("Required columns not found",
+		p.logger.Error("Required columns not found",
 			zap.Strings("missing", missing),
 			zap.Strings("available", cols))
 	}
