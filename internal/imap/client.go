@@ -19,6 +19,7 @@ const (
 	maxRetries    = 3
 	retryDelay    = 5 * time.Second
 	maxAttachment = 10 * 1024 * 1024 // 10 MB
+	lookbackDays  = 3                 // Number of days to look back for emails
 )
 
 // Client represents an IMAP client wrapper
@@ -51,7 +52,8 @@ func NewClient(cfg config.MailboxConfig, logger *zap.Logger) *Client {
 	}
 }
 
-// FetchTodayEmails fetches emails from today with Excel attachments
+// FetchTodayEmails fetches emails from the last N days with Excel attachments
+// The lookback period is defined by the lookbackDays constant
 func (c *Client) FetchTodayEmails(ctx context.Context) ([]Email, error) {
 	var emails []Email
 	var lastErr error
@@ -110,10 +112,10 @@ func (c *Client) fetchEmails(ctx context.Context) ([]Email, error) {
 		return []Email{}, nil
 	}
 
-	// Search for today's emails
-	today := time.Now().Format("02-Jan-2006")
+	// Search for emails from the last N days
+	sinceDate := time.Now().Add(-lookbackDays * 24 * time.Hour)
 	criteria := imap.NewSearchCriteria()
-	criteria.Since = time.Now().Add(-24 * time.Hour)
+	criteria.Since = sinceDate
 
 	uids, err := imapClient.Search(criteria)
 	if err != nil {
@@ -121,15 +123,18 @@ func (c *Client) fetchEmails(ctx context.Context) ([]Email, error) {
 	}
 
 	if len(uids) == 0 {
-		c.logger.Debug("No messages found for today",
+		c.logger.Debug("No messages found in the last N days",
 			zap.String("email", c.config.Email),
-			zap.String("date", today))
+			zap.Int("days", lookbackDays),
+			zap.String("since", sinceDate.Format("02-Jan-2006")))
 		return []Email{}, nil
 	}
 
 	c.logger.Info("Found messages",
 		zap.String("email", c.config.Email),
-		zap.Int("count", len(uids)))
+		zap.Int("count", len(uids)),
+		zap.Int("lookback_days", lookbackDays),
+		zap.String("since", sinceDate.Format("02-Jan-2006")))
 
 	// Fetch messages
 	seqset := new(imap.SeqSet)
