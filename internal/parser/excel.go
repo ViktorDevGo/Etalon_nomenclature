@@ -143,6 +143,10 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		mrc:          -1,
 	}
 
+	// Log found columns for debugging
+	p.logger.Debug("Checking row for headers",
+		zap.Strings("columns", cols))
+
 	for i, col := range cols {
 		normalized := strings.TrimSpace(strings.ToLower(col))
 
@@ -171,6 +175,30 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		mapping.nomenclature >= 0 &&
 		mapping.mrc >= 0 {
 		return mapping
+	}
+
+	// Log which required columns are missing
+	missing := []string{}
+	if mapping.article < 0 {
+		missing = append(missing, "артикул")
+	}
+	if mapping.brand < 0 {
+		missing = append(missing, "марка")
+	}
+	if mapping.sizeModel < 0 {
+		missing = append(missing, "размер и модель")
+	}
+	if mapping.nomenclature < 0 {
+		missing = append(missing, "номенклатура")
+	}
+	if mapping.mrc < 0 {
+		missing = append(missing, "мрц")
+	}
+
+	if len(missing) > 0 {
+		p.logger.Debug("Required columns not found",
+			zap.Strings("missing", missing),
+			zap.Strings("available", cols))
 	}
 
 	return nil

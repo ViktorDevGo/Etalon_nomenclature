@@ -9,7 +9,14 @@
       "Bash(git reset:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(else echo \".env файл не найден - нужно создать!\")",
+      "Bash(fi)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(python3:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose:*)"
     ]
   }
 }

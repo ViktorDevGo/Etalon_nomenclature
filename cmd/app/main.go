@@ -15,8 +15,8 @@ import (
 )
 
 func main() {
-	// Initialize logger
-	logger, err := zap.NewProduction()
+	// Initialize logger (Development mode for detailed debugging)
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
