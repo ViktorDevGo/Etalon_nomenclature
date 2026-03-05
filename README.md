@@ -11,6 +11,8 @@ Production-ready сервис на Golang для автоматической о
 - 🛡️ Защита от повторной обработки (по Message-ID)
 - 📦 Streaming парсинг для экономии памяти
 - 🔒 SSL подключение к PostgreSQL
+- 🔧 **Автоматические миграции БД при старте**
+- ✅ **Проверка доступности БД и схемы**
 - 📝 Structured logging (zap)
 - 🐳 Docker и Docker Compose
 - ♻️ Graceful shutdown
@@ -73,19 +75,24 @@ mailboxes:
 
 ### 3. Применение миграций
 
+> ⚠️ **Автоматические миграции**: Начиная с версии с автоматическими миграциями, приложение **самостоятельно создает таблицы** при первом запуске. Ручное применение миграций не требуется!
+
+Приложение автоматически:
+- ✅ Проверяет подключение к БД при старте
+- ✅ Проверяет наличие необходимых таблиц
+- ✅ Создает таблицы, если их нет
+- ✅ Применяет все необходимые индексы
+
+**Ручное применение (опционально):**
+
+Если нужно применить миграции вручную:
+
 ```bash
 # Подключитесь к вашей PostgreSQL БД
 psql "postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"
 
 # Выполните миграцию
 \i migrations/001_init.sql
-```
-
-Или через переменную окружения:
-
-```bash
-export DATABASE_URL="postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"
-make migrate
 ```
 
 ### 4. Локальный запуск
@@ -411,6 +418,34 @@ docker compose up -d
 ```
 
 ## Технические детали
+
+### Автоматические миграции БД
+
+При запуске приложение **автоматически проверяет и создает схему базы данных**:
+
+**Процесс инициализации:**
+1. ✅ Проверка подключения к PostgreSQL (`PingContext`)
+2. ✅ Проверка наличия таблиц `etalon_nomenclature` и `processed_emails`
+3. ✅ Автоматическое создание таблиц, если их нет
+4. ✅ Создание всех необходимых индексов
+
+**Логи при старте:**
+```
+INFO: Database connection established successfully
+INFO: Checking database schema...
+INFO: Required tables not found, applying migrations...
+INFO: Migrations applied successfully
+```
+
+**Что создается автоматически:**
+- Таблица `etalon_nomenclature` с колонками для данных из Excel
+- Таблица `processed_emails` для защиты от дубликатов
+- Индексы на `article`, `brand`, `isimport`, `created_at`
+- Уникальный индекс на `message_id`
+
+Это означает, что **не нужно вручную применять миграции** - просто запустите приложение с правильной конфигурацией БД!
+
+**Расположение кода:** `internal/db/postgres.go` (функции `ensureSchema`, `checkTablesExist`, `applyMigrations`)
 
 ### Период мониторинга почты
 

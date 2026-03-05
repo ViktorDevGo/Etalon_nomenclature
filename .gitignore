@@ -41,3 +41,4 @@ Thumbs.db
 *.crt
 *.key
 !root.crt.example
+app

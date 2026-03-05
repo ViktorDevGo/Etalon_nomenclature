@@ -5,11 +5,47 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/prokoleso/etalon-nomenclature/config"
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 )
+
+// migrationSQL contains the initial database schema
+const migrationSQL = `
+-- Table: etalon_nomenclature
+-- Stores nomenclature data extracted from Excel files
+CREATE TABLE IF NOT EXISTS etalon_nomenclature (
+    id SERIAL PRIMARY KEY,
+    article TEXT,
+    brand TEXT,
+    type TEXT,
+    size_model TEXT,
+    nomenclature TEXT,
+    mrc NUMERIC,
+    isimport INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT now()
+);
+
+-- Add indices for common queries
+CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_article ON etalon_nomenclature(article);
+CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_brand ON etalon_nomenclature(brand);
+CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_isimport ON etalon_nomenclature(isimport);
+CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_created_at ON etalon_nomenclature(created_at);
+
+-- Table: processed_emails
+-- Tracks processed emails to prevent duplicate processing
+CREATE TABLE IF NOT EXISTS processed_emails (
+    id SERIAL PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    processed_at TIMESTAMP DEFAULT now()
+);
+
+-- Unique index on message_id to prevent duplicates
+CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_emails_message_id
+ON processed_emails(message_id);
+`
 
 // Database represents the database connection
 type Database struct {
@@ -55,15 +91,105 @@ func New(cfg config.DatabaseConfig, logger *zap.Logger) (*Database, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Database{
+	logger.Info("Database connection established successfully")
+
+	database := &Database{
 		db:     db,
 		logger: logger,
-	}, nil
+	}
+
+	// Check and apply migrations if needed
+	if err := database.ensureSchema(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ensure database schema: %w", err)
+	}
+
+	return database, nil
 }
 
 // Close closes the database connection
 func (d *Database) Close() error {
 	return d.db.Close()
+}
+
+// ensureSchema checks if required tables exist and applies migrations if needed
+func (d *Database) ensureSchema(ctx context.Context) error {
+	d.logger.Info("Checking database schema...")
+
+	exists, err := d.checkTablesExist(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check tables: %w", err)
+	}
+
+	if exists {
+		d.logger.Info("Database schema is up to date")
+		return nil
+	}
+
+	d.logger.Info("Required tables not found, applying migrations...")
+	if err := d.applyMigrations(ctx); err != nil {
+		return fmt.Errorf("failed to apply migrations: %w", err)
+	}
+
+	d.logger.Info("Migrations applied successfully")
+	return nil
+}
+
+// checkTablesExist verifies that required tables exist in the database
+func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
+	// Check for both required tables
+	query := `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public'
+		AND table_name IN ('etalon_nomenclature', 'processed_emails')
+	`
+
+	var count int
+	if err := d.db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return false, fmt.Errorf("failed to query tables: %w", err)
+	}
+
+	// Both tables should exist
+	return count == 2, nil
+}
+
+// applyMigrations applies the database schema migrations
+func (d *Database) applyMigrations(ctx context.Context) error {
+	// Split migration into individual statements and execute them
+	statements := strings.Split(migrationSQL, ";")
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" || strings.HasPrefix(stmt, "--") {
+			continue
+		}
+
+		d.logger.Debug("Executing migration statement", zap.String("statement", stmt[:min(50, len(stmt))]+"..."))
+
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to execute migration: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit migration: %w", err)
+	}
+
+	return nil
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // IsEmailProcessed checks if an email with given message ID has been processed
