@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/prokoleso/etalon-nomenclature/config"
 	_ "github.com/lib/pq"
@@ -155,41 +154,16 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 
 // applyMigrations applies the database schema migrations
 func (d *Database) applyMigrations(ctx context.Context) error {
-	// Split migration into individual statements and execute them
-	statements := strings.Split(migrationSQL, ";")
+	d.logger.Info("Applying database migrations...")
 
-	tx, err := d.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" || strings.HasPrefix(stmt, "--") {
-			continue
-		}
-
-		d.logger.Debug("Executing migration statement", zap.String("statement", stmt[:min(50, len(stmt))]+"..."))
-
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to execute migration: %w", err)
-		}
+	// Execute the entire migration SQL in one go
+	// PostgreSQL can handle multiple statements separated by semicolons
+	if _, err := d.db.ExecContext(ctx, migrationSQL); err != nil {
+		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit migration: %w", err)
-	}
-
+	d.logger.Info("Database migrations applied successfully")
 	return nil
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // IsEmailProcessed checks if an email with given message ID has been processed
