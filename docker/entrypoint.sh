@@ -1,6 +1,13 @@
 #!/bin/sh
 set -e
 
+# Build DATABASE_DSN from components if separate variables provided
+if [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] && [ -n "$DB_PASSWORD" ] && [ -n "$DB_NAME" ]; then
+  # URL-encode password to handle special characters
+  ENCODED_PASSWORD=$(printf '%s' "$DB_PASSWORD" | sed 's/</%3C/g; s/>/%3E/g; s/;/%3B/g; s/:/%3A/g; s/@/%40/g; s|/|%2F|g; s/?/%3F/g; s/#/%23/g; s/&/%26/g; s/=/%3D/g; s/ /%20/g')
+  DATABASE_DSN="postgresql://${DB_USER}:${ENCODED_PASSWORD}@${DB_HOST}:${DB_PORT:-5432}/${DB_NAME}?sslmode=${DB_SSLMODE:-require}"
+fi
+
 # Generate config.yaml from environment variables
 cat > /app/config.yaml <<EOF
 # Auto-generated configuration from environment variables
