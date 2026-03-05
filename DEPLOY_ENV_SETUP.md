@@ -17,10 +17,24 @@ DATABASE_DSN=postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.t
 
 MAILBOXES_JSON=[{"email":"zakupki@etalon-shina.ru","password":"S69Y1ypojVLCZHO8","host":"mail.hosting.reg.ru","port":993}]
 
+ALLOWED_SENDERS=pna@sibzapaska.ru
+
 POLL_INTERVAL=1m
 
 TZ=Europe/Moscow
 ```
+
+### Важная переменная - фильтрация по отправителю:
+
+```bash
+ALLOWED_SENDERS=pna@sibzapaska.ru
+```
+
+**Что это делает:**
+- Обрабатывает ТОЛЬКО письма от указанных отправителей
+- Все остальные письма будут пропущены
+- Можно указать несколько отправителей через запятую: `sender1@domain.com,sender2@domain.com`
+- Оставьте пустым, чтобы обрабатывать письма от всех отправителей
 
 ### Опциональные переменные:
 
