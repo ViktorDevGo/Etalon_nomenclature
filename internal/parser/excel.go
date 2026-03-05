@@ -154,7 +154,7 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		normalized := strings.TrimSpace(strings.ToLower(col))
 
 		switch {
-		case strings.Contains(normalized, "артикул"):
+		case strings.Contains(normalized, "артикул") && !strings.Contains(normalized, "доп"):
 			mapping.article = i
 		case strings.Contains(normalized, "марка"):
 			mapping.brand = i
@@ -163,6 +163,14 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 			mapping.hasType = true
 		case strings.Contains(normalized, "размер") && strings.Contains(normalized, "модель"):
 			mapping.sizeModel = i
+			// Если есть отдельная колонка "номенклатура" - используем её
+			// Иначе используем "Размер и Модель" как номенклатуру
+			if strings.Contains(normalized, "номенклатура") {
+				mapping.nomenclature = i
+			} else if mapping.nomenclature < 0 {
+				// Если номенклатуры нет, используем "Размер и Модель"
+				mapping.nomenclature = i
+			}
 		case strings.Contains(normalized, "номенклатура"):
 			mapping.nomenclature = i
 		case strings.Contains(normalized, "мрц"):

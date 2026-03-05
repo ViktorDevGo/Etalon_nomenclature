@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/prokoleso/etalon-nomenclature/config"
 	_ "github.com/lib/pq"
@@ -243,30 +244,40 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 	}
 	defer tx.Rollback()
 
-	// Insert nomenclature data
+	// Insert nomenclature data in batches
 	if len(rows) > 0 {
-		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO etalon_nomenclature
-			(article, brand, type, size_model, nomenclature, mrc, isimport)
-			VALUES ($1, $2, $3, $4, $5, $6, 0)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
-		}
-		defer stmt.Close()
-
-		for _, row := range rows {
-			_, err := stmt.ExecContext(ctx,
-				row.Article,
-				row.Brand,
-				row.Type,
-				row.SizeModel,
-				row.Nomenclature,
-				row.MRC,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to insert row: %w", err)
+		batchSize := 1000
+		for i := 0; i < len(rows); i += batchSize {
+			end := i + batchSize
+			if end > len(rows) {
+				end = len(rows)
 			}
+			batch := rows[i:end]
+
+			// Build VALUES clause
+			values := make([]interface{}, 0, len(batch)*6)
+			placeholders := make([]string, 0, len(batch))
+
+			for idx, row := range batch {
+				placeholderStart := idx * 6
+				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, 0)",
+					placeholderStart+1, placeholderStart+2, placeholderStart+3,
+					placeholderStart+4, placeholderStart+5, placeholderStart+6))
+				values = append(values, row.Article, row.Brand, row.Type, row.SizeModel, row.Nomenclature, row.MRC)
+			}
+
+			query := fmt.Sprintf(`
+				INSERT INTO etalon_nomenclature
+				(article, brand, type, size_model, nomenclature, mrc, isimport)
+				VALUES %s
+			`, strings.Join(placeholders, ","))
+
+			_, err := tx.ExecContext(ctx, query, values...)
+			if err != nil {
+				return fmt.Errorf("failed to insert batch: %w", err)
+			}
+
+			d.logger.Debug("Inserted batch", zap.Int("batch_start", i), zap.Int("batch_size", len(batch)))
 		}
 	}
 

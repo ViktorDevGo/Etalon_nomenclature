@@ -16,7 +16,14 @@
       "Bash(find:*)",
       "Bash(python3:*)",
       "Bash(docker compose build:*)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(docker run:*)",
+      "Bash(psql:*)",
+      "Bash(config.yaml:*)",
+      "Bash(CONFIG_PATH=config.yaml ./app:*)",
+      "Bash(pkill:*)",
+      "Bash(CONFIG_PATH=config.yaml timeout 20 ./app:*)",
+      "Bash(killall:*)"
     ]
   }
 }
