@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: etalon-nomenclature
+    restart: unless-stopped
+
+    volumes:
+      # Mount config file
+      - ./config.yaml:/app/config.yaml:ro
+
+      # Mount SSL certificate for PostgreSQL
+      - ${HOME}/.cloud-certs/root.crt:/app/certs/root.crt:ro
+
+    environment:
+      # Set config path
+      - CONFIG_PATH=/app/config.yaml
+
+      # Set SSL certificate path
+      - PGSSLROOTCERT=/app/certs/root.crt
+
+      # Set timezone
+      - TZ=Europe/Moscow
+
+    # Health check (optional)
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "/app/app"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Network mode
+    network_mode: bridge
+
+# Optional: create a named volume for logs
+volumes:
+  logs:
+    driver: local

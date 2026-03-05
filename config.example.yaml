@@ -1,0 +1,37 @@
+# Etalon Nomenclature Service Configuration
+
+# How often to check for new emails
+poll_interval: 1m
+
+# Database configuration
+database:
+  # PostgreSQL connection string
+  dsn: "postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"
+
+  # Path to SSL root certificate
+  ssl_root_cert: "/app/certs/root.crt"
+
+  # Connection pool settings (optional)
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 5m
+
+# Email mailboxes to monitor
+mailboxes:
+  # First mailbox
+  - email: "example1@domain.com"
+    password: "password1"
+    host: "mail.hosting.reg.ru"
+    port: 993
+
+  # Second mailbox
+  - email: "example2@domain.com"
+    password: "password2"
+    host: "mail.hosting.reg.ru"
+    port: 993
+
+  # Add more mailboxes as needed
+  # - email: "example3@domain.com"
+  #   password: "password3"
+  #   host: "mail.hosting.reg.ru"
+  #   port: 993
