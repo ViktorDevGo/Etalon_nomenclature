@@ -236,11 +236,20 @@ func (p *Parser) parseRow(cols []string, mapping *columnMapping) (*db.Nomenclatu
 		typ = p.getColumn(cols, mapping.typ)
 	}
 	sizeModel := p.getColumn(cols, mapping.sizeModel)
-	nomenclature := p.getColumn(cols, mapping.nomenclature)
 	mrcStr := p.getColumn(cols, mapping.mrc)
 
+	// Build nomenclature from brand + type + size_model
+	nomenclature := brand
+	if typ != "" {
+		nomenclature += " " + typ
+	}
+	if sizeModel != "" {
+		nomenclature += " " + sizeModel
+	}
+	nomenclature = strings.TrimSpace(nomenclature)
+
 	// Validate required fields
-	if article == "" || brand == "" || nomenclature == "" {
+	if article == "" || brand == "" || sizeModel == "" {
 		return nil, fmt.Errorf("missing required fields")
 	}
 
