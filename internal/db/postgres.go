@@ -238,21 +238,41 @@ func (d *Database) InsertNomenclature(ctx context.Context, rows []NomenclatureRo
 
 // InsertNomenclatureWithEmail inserts nomenclature data and marks email as processed in a transaction
 func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []NomenclatureRow, messageID string) error {
+	d.logger.Info("Starting InsertNomenclatureWithEmail",
+		zap.Int("total_rows", len(rows)),
+		zap.String("message_id", messageID))
+
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
+		d.logger.Error("Failed to begin transaction", zap.Error(err))
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
+	d.logger.Info("Transaction started successfully")
+
 	// Insert nomenclature data in batches
 	if len(rows) > 0 {
 		batchSize := 1000
+		totalBatches := (len(rows) + batchSize - 1) / batchSize
+		d.logger.Info("Preparing to insert data in batches",
+			zap.Int("total_rows", len(rows)),
+			zap.Int("batch_size", batchSize),
+			zap.Int("total_batches", totalBatches))
+
 		for i := 0; i < len(rows); i += batchSize {
 			end := i + batchSize
 			if end > len(rows) {
 				end = len(rows)
 			}
 			batch := rows[i:end]
+			batchNum := (i / batchSize) + 1
+
+			d.logger.Info("Processing batch",
+				zap.Int("batch_num", batchNum),
+				zap.Int("total_batches", totalBatches),
+				zap.Int("batch_start", i),
+				zap.Int("batch_size", len(batch)))
 
 			// Build VALUES clause
 			values := make([]interface{}, 0, len(batch)*6)
@@ -272,30 +292,62 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 				VALUES %s
 			`, strings.Join(placeholders, ","))
 
-			_, err := tx.ExecContext(ctx, query, values...)
+			d.logger.Debug("Executing INSERT query",
+				zap.Int("batch_num", batchNum),
+				zap.Int("values_count", len(values)),
+				zap.Int("placeholders_count", len(placeholders)))
+
+			result, err := tx.ExecContext(ctx, query, values...)
 			if err != nil {
-				return fmt.Errorf("failed to insert batch: %w", err)
+				d.logger.Error("Failed to insert batch",
+					zap.Int("batch_num", batchNum),
+					zap.Int("batch_start", i),
+					zap.Int("batch_size", len(batch)),
+					zap.Error(err))
+				return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
 			}
 
-			d.logger.Debug("Inserted batch", zap.Int("batch_start", i), zap.Int("batch_size", len(batch)))
+			rowsAffected, _ := result.RowsAffected()
+			d.logger.Info("Batch inserted successfully",
+				zap.Int("batch_num", batchNum),
+				zap.Int64("rows_affected", rowsAffected))
 		}
 	}
 
+	d.logger.Info("All batches inserted, marking email as processed",
+		zap.String("message_id", messageID))
+
 	// Mark email as processed
-	_, err = tx.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		`INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT (message_id) DO NOTHING`,
 		messageID,
 	)
 	if err != nil {
+		d.logger.Error("Failed to mark email as processed",
+			zap.String("message_id", messageID),
+			zap.Error(err))
 		return fmt.Errorf("failed to mark email as processed: %w", err)
 	}
 
+	rowsAffected, _ := result.RowsAffected()
+	d.logger.Info("Email marked as processed",
+		zap.String("message_id", messageID),
+		zap.Int64("rows_affected", rowsAffected))
+
+	d.logger.Info("Committing transaction",
+		zap.Int("total_rows", len(rows)),
+		zap.String("message_id", messageID))
+
 	if err := tx.Commit(); err != nil {
+		d.logger.Error("Failed to commit transaction",
+			zap.Int("total_rows", len(rows)),
+			zap.String("message_id", messageID),
+			zap.Error(err))
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	d.logger.Info("Inserted nomenclature data and marked email as processed",
-		zap.Int("rows", len(rows)),
+	d.logger.Info("Transaction committed successfully - data saved to database",
+		zap.Int("total_rows", len(rows)),
 		zap.String("message_id", messageID))
 
 	return nil

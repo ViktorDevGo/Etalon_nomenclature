@@ -208,12 +208,37 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		return fmt.Errorf("failed to extract any data from attachments")
 	}
 
+	p.logger.Info("Preparing to save data to database",
+		zap.String("message_id", email.MessageID),
+		zap.Int("total_rows", len(allRows)))
+
+	// Log sample of first few rows for debugging
+	sampleSize := 3
+	if len(allRows) < sampleSize {
+		sampleSize = len(allRows)
+	}
+	for i := 0; i < sampleSize; i++ {
+		row := allRows[i]
+		p.logger.Debug("Sample row data",
+			zap.Int("row_index", i),
+			zap.String("article", row.Article),
+			zap.String("brand", row.Brand),
+			zap.String("type", row.Type),
+			zap.String("size_model", row.SizeModel),
+			zap.String("nomenclature", row.Nomenclature),
+			zap.Float64("mrc", row.MRC))
+	}
+
 	// Insert data and mark as processed in a transaction
 	if err := p.db.InsertNomenclatureWithEmail(ctx, allRows, email.MessageID); err != nil {
+		p.logger.Error("Database insert failed",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allRows)),
+			zap.Error(err))
 		return fmt.Errorf("failed to save data: %w", err)
 	}
 
-	p.logger.Info("Successfully processed email",
+	p.logger.Info("Successfully processed email and saved to database",
 		zap.String("message_id", email.MessageID),
 		zap.Int("total_rows", len(allRows)))
 
