@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build:
@@ -8,19 +6,21 @@ services:
     container_name: etalon-nomenclature
     restart: unless-stopped
 
-    volumes:
-      # Mount config file
-      - ./config.yaml:/app/config.yaml:ro
-
-      # Mount SSL certificate for PostgreSQL
-      - ${HOME}/.cloud-certs/root.crt:/app/certs/root.crt:ro
-
     environment:
-      # Set config path
-      - CONFIG_PATH=/app/config.yaml
+      # Database configuration
+      - DATABASE_DSN=${DATABASE_DSN:-postgresql://gen_user:password@host:5432/default_db?sslmode=verify-full}
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-25}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-5}
+      - DATABASE_CONN_MAX_LIFETIME=${DATABASE_CONN_MAX_LIFETIME:-5m}
 
-      # Set SSL certificate path
-      - PGSSLROOTCERT=/app/certs/root.crt
+      # SSL Certificate (base64 encoded)
+      - PGSSLROOTCERT_BASE64=${PGSSLROOTCERT_BASE64}
+
+      # Email configuration (JSON array)
+      - MAILBOXES_JSON=${MAILBOXES_JSON}
+
+      # Poll interval
+      - POLL_INTERVAL=${POLL_INTERVAL:-1m}
 
       # Set timezone
       - TZ=Europe/Moscow
@@ -52,8 +52,3 @@ services:
 
     # Network mode
     network_mode: bridge
-
-# Optional: create a named volume for logs
-volumes:
-  logs:
-    driver: local

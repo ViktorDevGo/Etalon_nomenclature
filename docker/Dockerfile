@@ -34,8 +34,12 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/app /app/app
 
-# Change ownership
-RUN chown -R appuser:appuser /app
+# Copy entrypoint script
+COPY docker/entrypoint.sh /app/entrypoint.sh
+
+# Make entrypoint executable and change ownership
+RUN chmod +x /app/entrypoint.sh && \
+    chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
@@ -45,6 +49,9 @@ EXPOSE 8080
 
 # Set default config path
 ENV CONFIG_PATH=/app/config.yaml
+
+# Set entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Run the application
 CMD ["/app/app"]

@@ -100,7 +100,33 @@ go run cmd/app/main.go
 
 ### 5. Docker запуск
 
+#### Способ 1: Environment Variables (Рекомендуется для облачных платформ)
+
 ```bash
+# Создать конфигурацию через интерактивный скрипт
+./scripts/prepare-env.sh
+
+# Или вручную создать .env файл
+cp .env.example .env
+nano .env
+
+# Сборка и запуск
+docker compose build
+docker compose up -d
+
+# Просмотр логов
+docker compose logs -f app
+```
+
+**Подробнее:** См. [DOCKER_ENV_MIGRATION.md](DOCKER_ENV_MIGRATION.md)
+
+#### Способ 2: Volume Mounts (Для локальной разработки)
+
+```bash
+# Создать config.yaml
+cp config.example.yaml config.yaml
+nano config.yaml
+
 # Сборка и запуск
 docker compose up -d
 
@@ -111,7 +137,13 @@ docker compose logs -f app
 docker compose down
 ```
 
+**Примечание:** Некоторые платформы (CI/CD, managed services) не поддерживают volume mounts. В таких случаях используйте способ 1.
+
 ## Конфигурация
+
+Сервис поддерживает два способа конфигурации:
+1. **Файл config.yaml** (традиционный способ)
+2. **Environment Variables** (рекомендуется для Docker/Cloud)
 
 ### Параметры config.yaml
 
@@ -141,6 +173,30 @@ mailboxes:
     host: "mail.hosting.reg.ru"
     port: 993
 ```
+
+### Environment Variables (Docker/Cloud)
+
+| Переменная | Описание | Пример |
+|-----------|----------|--------|
+| `DATABASE_DSN` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db` |
+| `DATABASE_MAX_OPEN_CONNS` | Макс. открытых соединений | `25` |
+| `DATABASE_MAX_IDLE_CONNS` | Макс. idle соединений | `5` |
+| `DATABASE_CONN_MAX_LIFETIME` | Время жизни соединения | `5m` |
+| `PGSSLROOTCERT_BASE64` | SSL сертификат (base64) | `LS0tLS1CRUdJTi...` |
+| `MAILBOXES_JSON` | Почтовые ящики (JSON) | `[{"email":"...","password":"..."}]` |
+| `POLL_INTERVAL` | Интервал проверки | `1m` |
+| `TZ` | Часовой пояс | `Europe/Moscow` |
+
+**Пример .env файла:**
+```bash
+DATABASE_DSN=postgresql://gen_user:password@host:5432/db
+PGSSLROOTCERT_BASE64=LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUR...
+MAILBOXES_JSON='[{"email":"user@domain.com","password":"pass","host":"mail.hosting.reg.ru","port":993}]'
+POLL_INTERVAL=1m
+TZ=Europe/Moscow
+```
+
+Подробная документация: [DOCKER_ENV_MIGRATION.md](DOCKER_ENV_MIGRATION.md)
 
 ## База данных
 

@@ -1,5 +1,75 @@
 # Deployment Guide
 
+## 🚀 Quick Start (Environment Variables - Recommended for Cloud)
+
+**Use this method if:**
+- Your deployment platform doesn't allow volume mounts
+- You're deploying to a managed service or CI/CD pipeline
+- You want a more secure, cloud-native approach
+
+### Step 1: Prepare environment variables
+
+```bash
+# Copy the example file
+cp .env.example .env
+
+# Edit the .env file
+nano .env
+```
+
+### Step 2: Configure your environment
+
+```bash
+# Database connection
+DATABASE_DSN=postgresql://gen_user:YOUR_PASSWORD@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full
+
+# Encode SSL certificate (required for secure PostgreSQL connection)
+cat ~/.cloud-certs/root.crt | base64 | tr -d '\n'
+# Copy the output and set it as:
+PGSSLROOTCERT_BASE64=LS0tLS1CRUdJTi...
+
+# Configure mailboxes (JSON format)
+MAILBOXES_JSON='[{"email":"your-email@domain.com","password":"yourpassword","host":"mail.hosting.reg.ru","port":993}]'
+
+# Application settings
+POLL_INTERVAL=1m
+TZ=Europe/Moscow
+```
+
+### Step 3: Deploy
+
+```bash
+# Build and run
+docker compose build
+docker compose up -d
+
+# Check logs
+docker compose logs -f app
+```
+
+### Adding multiple mailboxes
+
+Edit your `.env` file and add multiple mailbox objects in the JSON array:
+
+```bash
+MAILBOXES_JSON='[
+  {"email":"email1@domain.com","password":"pass1","host":"mail.hosting.reg.ru","port":993},
+  {"email":"email2@domain.com","password":"pass2","host":"mail.hosting.reg.ru","port":993},
+  {"email":"email3@domain.com","password":"pass3","host":"mail.hosting.reg.ru","port":993}
+]'
+```
+
+**Note:** Make sure to format it as a single line when setting in `.env`.
+
+---
+
+## 📋 Traditional Deployment (Volume Mounts)
+
+**Use this method if:**
+- You have full control over your server
+- Your platform allows volume mounts
+- You prefer file-based configuration
+
 ## Предварительные требования
 
 - Сервер с Ubuntu/Debian
