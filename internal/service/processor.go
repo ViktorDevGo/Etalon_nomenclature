@@ -139,6 +139,23 @@ func (p *Processor) processMailbox(ctx context.Context, mailboxCfg config.Mailbo
 
 // processEmail processes a single email
 func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
+	// Check if sender is allowed (if filter is configured)
+	if len(p.config.AllowedSenders) > 0 {
+		allowed := false
+		for _, sender := range p.config.AllowedSenders {
+			if email.From == sender {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			p.logger.Debug("Email from non-allowed sender, skipping",
+				zap.String("from", email.From),
+				zap.Strings("allowed_senders", p.config.AllowedSenders))
+			return nil
+		}
+	}
+
 	// Check if already processed
 	processed, err := p.db.IsEmailProcessed(ctx, email.MessageID)
 	if err != nil {

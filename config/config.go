@@ -10,9 +10,10 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	PollInterval time.Duration   `yaml:"poll_interval"`
-	Database     DatabaseConfig  `yaml:"database"`
-	Mailboxes    []MailboxConfig `yaml:"mailboxes"`
+	PollInterval   time.Duration   `yaml:"poll_interval"`
+	Database       DatabaseConfig  `yaml:"database"`
+	Mailboxes      []MailboxConfig `yaml:"mailboxes"`
+	AllowedSenders []string        `yaml:"allowed_senders"` // Only process emails from these senders
 }
 
 // DatabaseConfig represents database configuration

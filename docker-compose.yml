@@ -19,6 +19,9 @@ services:
       # Email configuration (JSON array)
       - MAILBOXES_JSON=${MAILBOXES_JSON}
 
+      # Email filtering (comma-separated list of allowed senders)
+      - ALLOWED_SENDERS=${ALLOWED_SENDERS}
+
       # Poll interval
       - POLL_INTERVAL=${POLL_INTERVAL:-1m}
 

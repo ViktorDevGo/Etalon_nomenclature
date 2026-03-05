@@ -46,6 +46,20 @@ MAILBOX
   done
 fi
 
+# Add allowed senders if provided
+if [ -n "$ALLOWED_SENDERS" ]; then
+  echo "" >> /app/config.yaml
+  echo "allowed_senders:" >> /app/config.yaml
+
+  # Parse comma-separated list
+  echo "$ALLOWED_SENDERS" | tr ',' '\n' | while IFS= read -r sender; do
+    sender=$(echo "$sender" | xargs) # trim whitespace
+    if [ -n "$sender" ]; then
+      echo "  - \"$sender\"" >> /app/config.yaml
+    fi
+  done
+fi
+
 # Set config path
 export CONFIG_PATH=/app/config.yaml
 
