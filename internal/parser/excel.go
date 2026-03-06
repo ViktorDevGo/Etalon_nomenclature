@@ -39,11 +39,18 @@ func New(logger *zap.Logger) *Parser {
 func (p *Parser) Parse(content []byte, filename string, emailDate time.Time) ([]db.NomenclatureRow, error) {
 	// Convert .xls to .xlsx if needed
 	if strings.HasSuffix(strings.ToLower(filename), ".xls") && !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
-		p.logger.Info("Converting .xls to .xlsx", zap.String("filename", filename))
-		convertedContent, err := ConvertXLStoXLSX(content)
+		p.logger.Info("Converting .xls to .xlsx",
+			zap.String("filename", filename),
+			zap.Int("size_bytes", len(content)))
+		convertedContent, err := ConvertXLStoXLSX(content, p.logger)
 		if err != nil {
+			p.logger.Error("XLS conversion failed",
+				zap.String("filename", filename),
+				zap.Error(err))
 			return nil, fmt.Errorf("failed to convert xls to xlsx: %w", err)
 		}
+		p.logger.Info("XLS conversion successful",
+			zap.String("filename", filename))
 		content = convertedContent
 	}
 

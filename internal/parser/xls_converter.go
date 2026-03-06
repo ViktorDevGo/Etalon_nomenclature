@@ -3,24 +3,44 @@ package parser
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	"github.com/extrame/xls"
 	"github.com/xuri/excelize/v2"
+	"go.uber.org/zap"
 )
 
 // ConvertXLStoXLSX converts .xls (binary) format to .xlsx (XML) format
-func ConvertXLStoXLSX(xlsContent []byte) (result []byte, err error) {
+func ConvertXLStoXLSX(xlsContent []byte, logger *zap.Logger) (result []byte, err error) {
+	startTime := time.Now()
+
 	// Recover from panic in xls library
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic during XLS conversion: %v", r)
+			if logger != nil {
+				logger.Error("Panic during XLS conversion", zap.Any("panic", r))
+			}
 		}
 	}()
+
+	if logger != nil {
+		logger.Debug("Starting XLS to XLSX conversion",
+			zap.Int("input_size_bytes", len(xlsContent)))
+	}
 
 	// Open .xls file
 	xlsFile, openErr := xls.OpenReader(bytes.NewReader(xlsContent), "utf-8")
 	if openErr != nil {
+		if logger != nil {
+			logger.Error("Failed to open XLS file", zap.Error(openErr))
+		}
 		return nil, fmt.Errorf("failed to open xls file: %w", openErr)
+	}
+
+	if logger != nil {
+		logger.Debug("XLS file opened successfully",
+			zap.Int("num_sheets", xlsFile.NumSheets()))
 	}
 
 	// Create new .xlsx file
@@ -34,6 +54,12 @@ func ConvertXLStoXLSX(xlsContent []byte) (result []byte, err error) {
 		}
 
 		sheetName := xlsSheet.Name
+		if logger != nil {
+			logger.Debug("Processing sheet",
+				zap.Int("sheet_index", sheetIdx),
+				zap.String("sheet_name", sheetName),
+				zap.Int("max_row", int(xlsSheet.MaxRow)))
+		}
 
 		// Create or use sheet in xlsx
 		var xlsxSheetName string
@@ -79,9 +105,26 @@ func ConvertXLStoXLSX(xlsContent []byte) (result []byte, err error) {
 	}
 
 	// Write to buffer
+	if logger != nil {
+		logger.Debug("Writing XLSX to buffer")
+	}
+
 	buf := new(bytes.Buffer)
 	if writeErr := xlsxFile.Write(buf); writeErr != nil {
+		if logger != nil {
+			logger.Error("Failed to write XLSX", zap.Error(writeErr))
+		}
 		return nil, fmt.Errorf("failed to write xlsx: %w", writeErr)
+	}
+
+	duration := time.Since(startTime)
+	outputSize := buf.Len()
+
+	if logger != nil {
+		logger.Info("XLS to XLSX conversion completed",
+			zap.Duration("duration", duration),
+			zap.Int("input_size", len(xlsContent)),
+			zap.Int("output_size", outputSize))
 	}
 
 	return buf.Bytes(), nil
