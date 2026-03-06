@@ -36,17 +36,17 @@ func NewPriceParser(logger *zap.Logger) *PriceParser {
 func (p *PriceParser) Parse(content []byte, filename string, provider string, emailDate time.Time) ([]db.PriceTireRow, error) {
 	// Convert .xls to .xlsx if needed
 	if strings.HasSuffix(strings.ToLower(filename), ".xls") && !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
-		p.logger.Info("Converting .xls to .xlsx",
+		p.logger.Info("Converting .xls to .xlsx with LibreOffice",
 			zap.String("filename", filename),
 			zap.Int("size_bytes", len(content)))
-		convertedContent, err := ConvertXLStoXLSX(content, p.logger)
+		convertedContent, err := ConvertXLStoXLSXWithLibreOffice(content, p.logger)
 		if err != nil {
 			p.logger.Error("XLS conversion failed",
 				zap.String("filename", filename),
 				zap.Error(err))
 			return nil, fmt.Errorf("failed to convert xls to xlsx: %w", err)
 		}
-		p.logger.Info("XLS conversion successful",
+		p.logger.Info("XLS conversion successful with LibreOffice",
 			zap.String("filename", filename))
 		content = convertedContent
 	}
