@@ -42,3 +42,4 @@ Thumbs.db
 *.key
 !root.crt.example
 app
+etalon_nomenclature

@@ -13,6 +13,9 @@ import (
 	"github.com/emersion/go-message/mail"
 	"github.com/prokoleso/etalon-nomenclature/config"
 	"go.uber.org/zap"
+
+	// Register charsets
+	_ "github.com/emersion/go-message/charset"
 )
 
 const (
@@ -215,7 +218,8 @@ func (c *Client) parseMessage(msg *imap.Message) (*Email, error) {
 		switch h := part.Header.(type) {
 		case *mail.AttachmentHeader:
 			filename, _ := h.Filename()
-			if !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
+			lowerFilename := strings.ToLower(filename)
+			if !strings.HasSuffix(lowerFilename, ".xlsx") && !strings.HasSuffix(lowerFilename, ".xls") {
 				continue
 			}
 

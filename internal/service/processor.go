@@ -175,7 +175,12 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		zap.String("from", email.From),
 		zap.Int("attachments", len(email.Attachments)))
 
+	// Create detector and price parser
+	detector := parser.NewDetector(p.logger)
+	priceParser := parser.NewPriceParser(p.logger)
+
 	var allRows []db.NomenclatureRow
+	var allPriceRows []db.PriceTireRow
 
 	// Process each attachment
 	for _, attachment := range email.Attachments {
@@ -183,23 +188,47 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			zap.String("filename", attachment.Filename),
 			zap.Int64("size", attachment.Size))
 
-		rows, err := p.parser.Parse(attachment.Content, attachment.Filename)
-		if err != nil {
-			p.logger.Error("Failed to parse attachment",
+		// Detect file type
+		fileType := detector.DetectFileType(attachment.Filename)
+
+		if fileType == parser.FileTypeNomenclature {
+			// Parse nomenclature file
+			rows, err := p.parser.Parse(attachment.Content, attachment.Filename, email.Date)
+			if err != nil {
+				p.logger.Error("Failed to parse nomenclature attachment",
+					zap.String("filename", attachment.Filename),
+					zap.Error(err))
+				continue
+			}
+
+			p.logger.Info("Parsed nomenclature attachment",
 				zap.String("filename", attachment.Filename),
-				zap.Error(err))
-			// Continue with other attachments
-			continue
+				zap.Int("rows", len(rows)))
+
+			allRows = append(allRows, rows...)
+
+		} else if fileType == parser.FileTypePrice {
+			// Detect provider and parse price file
+			provider := detector.DetectProvider(email.From)
+			priceRows, err := priceParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+			if err != nil {
+				p.logger.Error("Failed to parse price attachment",
+					zap.String("filename", attachment.Filename),
+					zap.String("provider", string(provider)),
+					zap.Error(err))
+				continue
+			}
+
+			p.logger.Info("Parsed price attachment",
+				zap.String("filename", attachment.Filename),
+				zap.String("provider", string(provider)),
+				zap.Int("rows", len(priceRows)))
+
+			allPriceRows = append(allPriceRows, priceRows...)
 		}
-
-		p.logger.Info("Parsed attachment",
-			zap.String("filename", attachment.Filename),
-			zap.Int("rows", len(rows)))
-
-		allRows = append(allRows, rows...)
 	}
 
-	if len(allRows) == 0 {
+	if len(allRows) == 0 && len(allPriceRows) == 0 {
 		p.logger.Error("No data extracted from attachments - NOT marking as processed",
 			zap.String("message_id", email.MessageID),
 			zap.String("subject", email.Subject),
@@ -208,39 +237,81 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		return fmt.Errorf("failed to extract any data from attachments")
 	}
 
-	p.logger.Info("Preparing to save data to database",
-		zap.String("message_id", email.MessageID),
-		zap.Int("total_rows", len(allRows)))
-
-	// Log sample of first few rows for debugging
-	sampleSize := 3
-	if len(allRows) < sampleSize {
-		sampleSize = len(allRows)
-	}
-	for i := 0; i < sampleSize; i++ {
-		row := allRows[i]
-		p.logger.Debug("Sample row data",
-			zap.Int("row_index", i),
-			zap.String("article", row.Article),
-			zap.String("brand", row.Brand),
-			zap.String("type", row.Type),
-			zap.String("size_model", row.SizeModel),
-			zap.String("nomenclature", row.Nomenclature),
-			zap.Float64("mrc", row.MRC))
-	}
-
-	// Insert data and mark as processed in a transaction
-	if err := p.db.InsertNomenclatureWithEmail(ctx, allRows, email.MessageID); err != nil {
-		p.logger.Error("Database insert failed",
+	// Save nomenclature data if present
+	if len(allRows) > 0 {
+		p.logger.Info("Preparing to save nomenclature data to database",
 			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allRows)),
-			zap.Error(err))
-		return fmt.Errorf("failed to save data: %w", err)
+			zap.Int("total_rows", len(allRows)))
+
+		// Log sample of first few rows for debugging
+		sampleSize := 3
+		if len(allRows) < sampleSize {
+			sampleSize = len(allRows)
+		}
+		for i := 0; i < sampleSize; i++ {
+			row := allRows[i]
+			p.logger.Debug("Sample nomenclature row",
+				zap.Int("row_index", i),
+				zap.String("article", row.Article),
+				zap.String("brand", row.Brand),
+				zap.String("type", row.Type),
+				zap.String("size_model", row.SizeModel),
+				zap.String("nomenclature", row.Nomenclature),
+				zap.Float64("mrc", row.MRC))
+		}
+
+		if err := p.db.InsertNomenclatureWithEmail(ctx, allRows, email.MessageID); err != nil {
+			p.logger.Error("Failed to save nomenclature data",
+				zap.String("message_id", email.MessageID),
+				zap.Int("total_rows", len(allRows)),
+				zap.Error(err))
+			return fmt.Errorf("failed to save nomenclature: %w", err)
+		}
+
+		p.logger.Info("Successfully saved nomenclature data",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allRows)))
+	}
+
+	// Save price data if present
+	if len(allPriceRows) > 0 {
+		p.logger.Info("Preparing to save price data to database",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allPriceRows)))
+
+		// Log sample of first few price rows
+		sampleSize := 3
+		if len(allPriceRows) < sampleSize {
+			sampleSize = len(allPriceRows)
+		}
+		for i := 0; i < sampleSize; i++ {
+			row := allPriceRows[i]
+			p.logger.Debug("Sample price row",
+				zap.Int("row_index", i),
+				zap.String("article", row.Article),
+				zap.Float64("price", row.Price),
+				zap.Int("balance", row.Balance),
+				zap.String("store", row.Store),
+				zap.String("provider", row.Provider))
+		}
+
+		if err := p.db.InsertPriceTiresWithEmail(ctx, allPriceRows, email.MessageID); err != nil {
+			p.logger.Error("Failed to save price data",
+				zap.String("message_id", email.MessageID),
+				zap.Int("total_rows", len(allPriceRows)),
+				zap.Error(err))
+			return fmt.Errorf("failed to save prices: %w", err)
+		}
+
+		p.logger.Info("Successfully saved price data",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allPriceRows)))
 	}
 
 	p.logger.Info("Successfully processed email and saved to database",
 		zap.String("message_id", email.MessageID),
-		zap.Int("total_rows", len(allRows)))
+		zap.Int("nomenclature_rows", len(allRows)),
+		zap.Int("price_rows", len(allPriceRows)))
 
 	return nil
 }

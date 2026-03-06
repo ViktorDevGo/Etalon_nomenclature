@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prokoleso/etalon-nomenclature/internal/db"
 	"github.com/xuri/excelize/v2"
@@ -35,7 +36,17 @@ func New(logger *zap.Logger) *Parser {
 }
 
 // Parse parses an Excel file and returns nomenclature rows
-func (p *Parser) Parse(content []byte, filename string) ([]db.NomenclatureRow, error) {
+func (p *Parser) Parse(content []byte, filename string, emailDate time.Time) ([]db.NomenclatureRow, error) {
+	// Convert .xls to .xlsx if needed
+	if strings.HasSuffix(strings.ToLower(filename), ".xls") && !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
+		p.logger.Info("Converting .xls to .xlsx", zap.String("filename", filename))
+		convertedContent, err := ConvertXLStoXLSX(content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert xls to xlsx: %w", err)
+		}
+		content = convertedContent
+	}
+
 	f, err := excelize.OpenReader(bytes.NewReader(content))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open excel file: %w", err)
@@ -51,7 +62,7 @@ func (p *Parser) Parse(content []byte, filename string) ([]db.NomenclatureRow, e
 		zap.Int("sheets", len(sheets)))
 
 	for _, sheetName := range sheets {
-		rows, err := p.parseSheet(f, sheetName)
+		rows, err := p.parseSheet(f, sheetName, emailDate)
 		if err != nil {
 			p.logger.Warn("Failed to parse sheet",
 				zap.String("sheet", sheetName),
@@ -77,7 +88,7 @@ func (p *Parser) Parse(content []byte, filename string) ([]db.NomenclatureRow, e
 	return allRows, nil
 }
 
-func (p *Parser) parseSheet(f *excelize.File, sheetName string) ([]db.NomenclatureRow, error) {
+func (p *Parser) parseSheet(f *excelize.File, sheetName string, emailDate time.Time) ([]db.NomenclatureRow, error) {
 	// Get streaming reader for memory efficiency
 	rows, err := f.Rows(sheetName)
 	if err != nil {
@@ -119,7 +130,7 @@ func (p *Parser) parseSheet(f *excelize.File, sheetName string) ([]db.Nomenclatu
 		}
 
 		// Parse data row
-		row, err := p.parseRow(cols, mapping)
+		row, err := p.parseRow(cols, mapping, emailDate)
 		if err != nil {
 			p.logger.Debug("Skipping invalid row",
 				zap.String("sheet", sheetName),
@@ -223,7 +234,7 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 	return nil
 }
 
-func (p *Parser) parseRow(cols []string, mapping *columnMapping) (*db.NomenclatureRow, error) {
+func (p *Parser) parseRow(cols []string, mapping *columnMapping, emailDate time.Time) (*db.NomenclatureRow, error) {
 	if len(cols) == 0 {
 		return nil, fmt.Errorf("empty row")
 	}
@@ -266,6 +277,7 @@ func (p *Parser) parseRow(cols []string, mapping *columnMapping) (*db.Nomenclatu
 		SizeModel:    sizeModel,
 		Nomenclature: nomenclature,
 		MRC:          mrc,
+		EmailDate:    emailDate,
 	}, nil
 }
 
