@@ -61,7 +61,8 @@
       "Bash(/tmp/test_specific_article.go:*)",
       "Bash(jobs:*)",
       "Bash(launchctl list:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(ls:*)"
     ]
   }
 }
