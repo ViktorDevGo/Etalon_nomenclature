@@ -8,21 +8,22 @@ services:
 
     environment:
       # Database configuration - Option 1: Use separate variables (recommended for passwords with special chars)
-      - DB_HOST=${DB_HOST}
+      # These variables must be set in .env file in the same directory as docker-compose.yml
+      - DB_HOST=${DB_HOST:-}
       - DB_PORT=${DB_PORT:-5432}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
+      - DB_NAME=${DB_NAME:-}
       - DB_SSLMODE=${DB_SSLMODE:-require}
 
       # Database configuration - Option 2: Use full DSN (if DB_* vars not set)
-      - DATABASE_DSN=${DATABASE_DSN}
+      - DATABASE_DSN=${DATABASE_DSN:-}
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-25}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-5}
       - DATABASE_CONN_MAX_LIFETIME=${DATABASE_CONN_MAX_LIFETIME:-5m}
 
-      # SSL Certificate (base64 encoded)
-      - PGSSLROOTCERT_BASE64=${PGSSLROOTCERT_BASE64}
+      # SSL Certificate (base64 encoded, optional)
+      - PGSSLROOTCERT_BASE64=${PGSSLROOTCERT_BASE64:-}
 
       # Email configuration (JSON array)
       - MAILBOXES_JSON=${MAILBOXES_JSON}
@@ -48,10 +49,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '1.0'
           memory: 2G
         reservations:
-          cpus: '0.5'
+          cpus: '0.25'
           memory: 512M
 
     # Logging configuration
