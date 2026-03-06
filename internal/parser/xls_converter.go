@@ -14,6 +14,18 @@ import (
 func ConvertXLStoXLSX(xlsContent []byte, logger *zap.Logger) (result []byte, err error) {
 	startTime := time.Now()
 
+	// Check file size - skip very large XLS files (library has issues with them)
+	const maxXLSSize = 2 * 1024 * 1024 // 2 MB
+	if len(xlsContent) > maxXLSSize {
+		if logger != nil {
+			logger.Warn("XLS file too large, skipping conversion",
+				zap.Int("size_bytes", len(xlsContent)),
+				zap.Int("max_size_bytes", maxXLSSize),
+				zap.String("recommendation", "Please convert to XLSX manually or ask supplier to send XLSX"))
+		}
+		return nil, fmt.Errorf("XLS file too large (%d bytes, max %d bytes): github.com/extrame/xls library has issues with large files - please convert to XLSX format", len(xlsContent), maxXLSSize)
+	}
+
 	// Recover from panic in xls library
 	defer func() {
 		if r := recover(); r != nil {
