@@ -40,12 +40,17 @@ CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_created_at ON etalon_nomencla
 CREATE TABLE IF NOT EXISTS processed_emails (
     id SERIAL PRIMARY KEY,
     message_id TEXT NOT NULL,
+    email_date TIMESTAMP,
     processed_at TIMESTAMP DEFAULT now()
 );
 
 -- Unique index on message_id to prevent duplicates
 CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_emails_message_id
 ON processed_emails(message_id);
+
+-- Index on email_date for queries
+CREATE INDEX IF NOT EXISTS idx_processed_emails_email_date
+ON processed_emails(email_date);
 
 -- Table: price_tires
 -- Stores tire prices from suppliers
@@ -265,10 +270,10 @@ func (d *Database) IsEmailProcessed(ctx context.Context, messageID string) (bool
 }
 
 // MarkEmailAsProcessed marks an email as processed
-func (d *Database) MarkEmailAsProcessed(ctx context.Context, messageID string) error {
-	query := `INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT (message_id) DO NOTHING`
+func (d *Database) MarkEmailAsProcessed(ctx context.Context, messageID string, emailDate time.Time) error {
+	query := `INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`
 
-	_, err := d.db.ExecContext(ctx, query, messageID)
+	_, err := d.db.ExecContext(ctx, query, messageID, emailDate)
 	if err != nil {
 		return fmt.Errorf("failed to mark email as processed: %w", err)
 	}
@@ -456,10 +461,15 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 	d.logger.Info("All batches inserted, marking email as processed",
 		zap.String("message_id", messageID))
 
-	// Mark email as processed
+	// Mark email as processed with email date from first row
+	var emailDate time.Time
+	if len(rows) > 0 {
+		emailDate = rows[0].EmailDate
+	}
+
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT (message_id) DO NOTHING`,
-		messageID,
+		`INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`,
+		messageID, emailDate,
 	)
 	if err != nil {
 		d.logger.Error("Failed to mark email as processed",
@@ -573,10 +583,15 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 	d.logger.Info("All batches inserted, marking email as processed",
 		zap.String("message_id", messageID))
 
-	// Mark email as processed
+	// Mark email as processed with email date from first row
+	var emailDate time.Time
+	if len(rows) > 0 {
+		emailDate = rows[0].EmailDate
+	}
+
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO processed_emails (message_id) VALUES ($1) ON CONFLICT (message_id) DO NOTHING`,
-		messageID,
+		`INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`,
+		messageID, emailDate,
 	)
 	if err != nil {
 		d.logger.Error("Failed to mark email as processed",
