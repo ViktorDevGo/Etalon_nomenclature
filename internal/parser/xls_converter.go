@@ -9,11 +9,18 @@ import (
 )
 
 // ConvertXLStoXLSX converts .xls (binary) format to .xlsx (XML) format
-func ConvertXLStoXLSX(xlsContent []byte) ([]byte, error) {
+func ConvertXLStoXLSX(xlsContent []byte) (result []byte, err error) {
+	// Recover from panic in xls library
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic during XLS conversion: %v", r)
+		}
+	}()
+
 	// Open .xls file
-	xlsFile, err := xls.OpenReader(bytes.NewReader(xlsContent), "utf-8")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open xls file: %w", err)
+	xlsFile, openErr := xls.OpenReader(bytes.NewReader(xlsContent), "utf-8")
+	if openErr != nil {
+		return nil, fmt.Errorf("failed to open xls file: %w", openErr)
 	}
 
 	// Create new .xlsx file
@@ -73,8 +80,8 @@ func ConvertXLStoXLSX(xlsContent []byte) ([]byte, error) {
 
 	// Write to buffer
 	buf := new(bytes.Buffer)
-	if err := xlsxFile.Write(buf); err != nil {
-		return nil, fmt.Errorf("failed to write xlsx: %w", err)
+	if writeErr := xlsxFile.Write(buf); writeErr != nil {
+		return nil, fmt.Errorf("failed to write xlsx: %w", writeErr)
 	}
 
 	return buf.Bytes(), nil
