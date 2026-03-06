@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/prokoleso/etalon-nomenclature/config"
@@ -139,6 +140,26 @@ func (p *Processor) processMailbox(ctx context.Context, mailboxCfg config.Mailbo
 
 // processEmail processes a single email
 func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
+	// Check blacklisted domains (system emails that should never be processed)
+	blacklistedDomains := []string{
+		"@bitrix24.com",
+		"@noreply",
+		"@no-reply",
+		"@mailer-daemon",
+		"@postmaster",
+		"@mail-daemon",
+	}
+
+	emailLower := strings.ToLower(email.From)
+	for _, blacklisted := range blacklistedDomains {
+		if strings.Contains(emailLower, blacklisted) {
+			p.logger.Debug("Email from blacklisted domain, skipping",
+				zap.String("from", email.From),
+				zap.String("reason", "System/automated email"))
+			return nil
+		}
+	}
+
 	// Check if sender is allowed (if filter is configured)
 	if len(p.config.AllowedSenders) > 0 {
 		allowed := false
