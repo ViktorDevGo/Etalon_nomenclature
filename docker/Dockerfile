@@ -37,9 +37,11 @@ RUN groupadd -g 1000 appuser && \
 
 WORKDIR /app
 
-# Create temp directory for XLS conversion
+# Create temp directory for XLS conversion and log directory
 RUN mkdir -p /tmp/xls-convert && \
-    chown -R appuser:appuser /tmp/xls-convert
+    chown -R appuser:appuser /tmp/xls-convert && \
+    mkdir -p /var/log/parser && \
+    chown -R appuser:appuser /var/log/parser
 
 # Copy binary from builder
 COPY --from=builder /build/app /app/app

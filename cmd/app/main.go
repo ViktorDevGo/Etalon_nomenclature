@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,15 +11,41 @@ import (
 	"github.com/prokoleso/etalon-nomenclature/internal/db"
 	"github.com/prokoleso/etalon-nomenclature/internal/service"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
-	// Initialize logger (Development mode for detailed debugging)
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
+	// Initialize logger with daily rotation (keeps only today's logs)
+	logFile := &lumberjack.Logger{
+		Filename:   "/var/log/parser/parser.log",
+		MaxSize:    50,  // MB
+		MaxBackups: 0,   // Keep only current file
+		MaxAge:     1,   // Delete logs older than 1 day
+		Compress:   false,
 	}
+
+	// Configure encoder
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+
+	// Create core that writes to both file and console
+	fileCore := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderConfig),
+		zapcore.AddSync(logFile),
+		zapcore.DebugLevel,
+	)
+	consoleCore := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(encoderConfig),
+		zapcore.AddSync(os.Stdout),
+		zapcore.InfoLevel,
+	)
+
+	// Combine cores
+	core := zapcore.NewTee(fileCore, consoleCore)
+	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 	defer logger.Sync()
 
 	// Load configuration

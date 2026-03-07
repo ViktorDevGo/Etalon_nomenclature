@@ -6,6 +6,9 @@ services:
     container_name: etalon-nomenclature
     restart: unless-stopped
 
+    volumes:
+      - ./logs:/var/log/parser
+
     environment:
       # Database configuration - Option 1: Use separate variables (recommended for passwords with special chars)
       # These variables must be set in .env file in the same directory as docker-compose.yml
