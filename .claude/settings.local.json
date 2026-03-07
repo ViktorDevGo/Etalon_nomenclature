@@ -62,7 +62,9 @@
       "Bash(jobs:*)",
       "Bash(launchctl list:*)",
       "Bash(lsof:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(/tmp/delete_bitrix.sql:*)",
+      "Bash(ssh root@c37e696087932476c61fd621.twc1.net:*)"
     ]
   }
 }
