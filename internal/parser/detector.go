@@ -16,6 +16,7 @@ const (
 	// FileType constants
 	FileTypeNomenclature FileType = "nomenclature"
 	FileTypePrice        FileType = "price"
+	FileTypeDisk         FileType = "disk"
 
 	// Provider constants
 	ProviderBigMachine Provider = "БИГМАШИН"
@@ -36,11 +37,20 @@ func NewDetector(logger *zap.Logger) *Detector {
 	}
 }
 
-// DetectFileType determines if the file is a price list or nomenclature based on filename
+// DetectFileType determines if the file is a price list, disk file, or nomenclature based on filename
 func (d *Detector) DetectFileType(filename string) FileType {
 	normalized := strings.ToLower(filename)
 
-	// Check if filename contains "прайс" or "прайс-лист"
+	// Check if filename contains "диск" - disk files
+	if strings.Contains(normalized, "диск") {
+		d.logger.Info("Detected disk file",
+			zap.String("filename", filename),
+			zap.String("type", string(FileTypeDisk)))
+		return FileTypeDisk
+	}
+
+	// Check if filename contains "прайс" or "прайс-лист" - price files
+	// Note: Some providers use the same file for tires and disks (different sheets/sections)
 	if strings.Contains(normalized, "прайс") {
 		d.logger.Info("Detected price file",
 			zap.String("filename", filename),

@@ -196,12 +196,14 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		zap.String("from", email.From),
 		zap.Int("attachments", len(email.Attachments)))
 
-	// Create detector and price parser
+	// Create detector and parsers
 	detector := parser.NewDetector(p.logger)
 	priceParser := parser.NewPriceParser(p.logger)
+	diskParser := parser.NewDiskParser(p.logger)
 
 	var allRows []db.NomenclatureRow
 	var allPriceRows []db.PriceTireRow
+	var allDiskRows []db.PriceDiskRow
 
 	// Process each attachment
 	for _, attachment := range email.Attachments {
@@ -231,25 +233,61 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		} else if fileType == parser.FileTypePrice {
 			// Detect provider and parse price file
 			provider := detector.DetectProvider(email.From)
+
+			// Parse tires from price file
 			priceRows, err := priceParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
 			if err != nil {
 				p.logger.Error("Failed to parse price attachment",
 					zap.String("filename", attachment.Filename),
 					zap.String("provider", string(provider)),
 					zap.Error(err))
+			} else {
+				p.logger.Info("Parsed tire price attachment",
+					zap.String("filename", attachment.Filename),
+					zap.String("provider", string(provider)),
+					zap.Int("rows", len(priceRows)))
+				allPriceRows = append(allPriceRows, priceRows...)
+			}
+
+			// For ЗАПАСКА and БРИНЕКС, also try to parse disks from the same file
+			if provider == parser.ProviderZapaska || provider == parser.ProviderBrinex {
+				diskRows, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+				if err != nil {
+					p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
+						zap.String("filename", attachment.Filename),
+						zap.String("provider", string(provider)),
+						zap.Error(err))
+				} else if len(diskRows) > 0 {
+					p.logger.Info("Parsed disk section from price attachment",
+						zap.String("filename", attachment.Filename),
+						zap.String("provider", string(provider)),
+						zap.Int("rows", len(diskRows)))
+					allDiskRows = append(allDiskRows, diskRows...)
+				}
+			}
+
+		} else if fileType == parser.FileTypeDisk {
+			// Detect provider and parse disk file
+			provider := detector.DetectProvider(email.From)
+			diskRows, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+			if err != nil {
+				p.logger.Error("Failed to parse disk attachment",
+					zap.String("filename", attachment.Filename),
+					zap.String("provider", string(provider)),
+					zap.Error(err))
 				continue
 			}
 
-			p.logger.Info("Parsed price attachment",
+			p.logger.Info("Parsed disk attachment",
 				zap.String("filename", attachment.Filename),
 				zap.String("provider", string(provider)),
-				zap.Int("rows", len(priceRows)))
+				zap.Int("rows", len(diskRows)))
 
-			allPriceRows = append(allPriceRows, priceRows...)
+			allDiskRows = append(allDiskRows, diskRows...)
 		}
 	}
 
-	if len(allRows) == 0 && len(allPriceRows) == 0 {
+	if len(allRows) == 0 && len(allPriceRows) == 0 && len(allDiskRows) == 0 {
 		p.logger.Error("No data extracted from attachments - NOT marking as processed",
 			zap.String("message_id", email.MessageID),
 			zap.String("subject", email.Subject),
@@ -329,10 +367,50 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			zap.Int("total_rows", len(allPriceRows)))
 	}
 
+	// Save disk data if present
+	if len(allDiskRows) > 0 {
+		p.logger.Info("Preparing to save disk data to database",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allDiskRows)))
+
+		// Log sample of first few disk rows
+		sampleSize := 3
+		if len(allDiskRows) < sampleSize {
+			sampleSize = len(allDiskRows)
+		}
+		for i := 0; i < sampleSize; i++ {
+			row := allDiskRows[i]
+			p.logger.Debug("Sample disk row",
+				zap.Int("row_index", i),
+				zap.String("article", row.Article),
+				zap.String("manufacturer", row.Manufacturer),
+				zap.String("model", row.Model),
+				zap.Float64("width", row.Width),
+				zap.Float64("diameter", row.Diameter),
+				zap.String("drilling", row.Drilling),
+				zap.Int("balance", row.Balance),
+				zap.String("store", row.Store),
+				zap.String("provider", row.Provider))
+		}
+
+		if err := p.db.InsertPriceDisksWithEmail(ctx, allDiskRows, email.MessageID); err != nil {
+			p.logger.Error("Failed to save disk data",
+				zap.String("message_id", email.MessageID),
+				zap.Int("total_rows", len(allDiskRows)),
+				zap.Error(err))
+			return fmt.Errorf("failed to save disk prices: %w", err)
+		}
+
+		p.logger.Info("Successfully saved disk data",
+			zap.String("message_id", email.MessageID),
+			zap.Int("total_rows", len(allDiskRows)))
+	}
+
 	p.logger.Info("Successfully processed email and saved to database",
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
-		zap.Int("price_rows", len(allPriceRows)))
+		zap.Int("price_rows", len(allPriceRows)),
+		zap.Int("disk_rows", len(allDiskRows)))
 
 	return nil
 }

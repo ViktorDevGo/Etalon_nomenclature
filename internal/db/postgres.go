@@ -69,6 +69,32 @@ CREATE TABLE IF NOT EXISTS price_tires (
 CREATE INDEX IF NOT EXISTS idx_price_tires_article ON price_tires(article);
 CREATE INDEX IF NOT EXISTS idx_price_tires_provider ON price_tires(provider);
 CREATE INDEX IF NOT EXISTS idx_price_tires_created_at ON price_tires(created_at);
+
+-- Table: price_disks
+-- Stores disk/wheel prices from suppliers
+CREATE TABLE IF NOT EXISTS price_disks (
+    id SERIAL PRIMARY KEY,
+    article TEXT NOT NULL,
+    manufacturer TEXT,
+    model TEXT,
+    width NUMERIC,
+    diameter NUMERIC,
+    drilling TEXT,
+    radius TEXT,
+    central_hole TEXT,
+    color TEXT,
+    store TEXT,
+    balance INTEGER DEFAULT 0,
+    provider TEXT,
+    isimport INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT now(),
+    email_date TIMESTAMP
+);
+
+-- Index for fast article lookups
+CREATE INDEX IF NOT EXISTS idx_price_disks_article ON price_disks(article);
+CREATE INDEX IF NOT EXISTS idx_price_disks_provider ON price_disks(provider);
+CREATE INDEX IF NOT EXISTS idx_price_disks_created_at ON price_disks(created_at);
 `
 
 // Database represents the database connection
@@ -96,6 +122,23 @@ type PriceTireRow struct {
 	Store     string
 	Provider  string
 	EmailDate time.Time
+}
+
+// PriceDiskRow represents a row in price_disks table
+type PriceDiskRow struct {
+	Article      string
+	Manufacturer string
+	Model        string
+	Width        float64
+	Diameter     float64
+	Drilling     string
+	Radius       string
+	CentralHole  string
+	Color        string
+	Store        string
+	Balance      int
+	Provider     string
+	EmailDate    time.Time
 }
 
 // New creates a new database connection
@@ -179,7 +222,7 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 	query := `
 		SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public'
-		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'price_tires')
+		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'price_tires', 'price_disks')
 	`
 
 	var count int
@@ -187,8 +230,8 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to query tables: %w", err)
 	}
 
-	// All three tables should exist
-	return count == 3, nil
+	// All four tables should exist
+	return count == 4, nil
 }
 
 // applyMigrations applies the database schema migrations
@@ -618,6 +661,137 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 	}
 
 	d.logger.Info("Transaction committed successfully - price data saved to database",
+		zap.Int("total_rows", len(rows)),
+		zap.String("message_id", messageID))
+
+	return nil
+}
+
+// InsertPriceDisksWithEmail inserts price disk data and marks email as processed in a transaction
+func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDiskRow, messageID string) error {
+	d.logger.Info("Starting InsertPriceDisksWithEmail",
+		zap.Int("total_rows", len(rows)),
+		zap.String("message_id", messageID))
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		d.logger.Error("Failed to begin transaction", zap.Error(err))
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	d.logger.Info("Transaction started successfully")
+
+	// Insert price disk data in batches
+	if len(rows) > 0 {
+		batchSize := 1000
+		totalBatches := (len(rows) + batchSize - 1) / batchSize
+		d.logger.Info("Preparing to insert disk price data in batches",
+			zap.Int("total_rows", len(rows)),
+			zap.Int("batch_size", batchSize),
+			zap.Int("total_batches", totalBatches))
+
+		for i := 0; i < len(rows); i += batchSize {
+			end := i + batchSize
+			if end > len(rows) {
+				end = len(rows)
+			}
+			batch := rows[i:end]
+			batchNum := (i / batchSize) + 1
+
+			d.logger.Info("Processing batch",
+				zap.Int("batch_num", batchNum),
+				zap.Int("total_batches", totalBatches),
+				zap.Int("batch_start", i),
+				zap.Int("batch_size", len(batch)))
+
+			// Build VALUES clause - 13 fields
+			values := make([]interface{}, 0, len(batch)*13)
+			placeholders := make([]string, 0, len(batch))
+
+			for idx, row := range batch {
+				placeholderStart := idx * 13
+				placeholders = append(placeholders, fmt.Sprintf(
+					"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
+					placeholderStart+1, placeholderStart+2, placeholderStart+3,
+					placeholderStart+4, placeholderStart+5, placeholderStart+6,
+					placeholderStart+7, placeholderStart+8, placeholderStart+9,
+					placeholderStart+10, placeholderStart+11, placeholderStart+12,
+					placeholderStart+13))
+				values = append(values,
+					row.Article, row.Manufacturer, row.Model,
+					row.Width, row.Diameter, row.Drilling,
+					row.Radius, row.CentralHole, row.Color,
+					row.Store, row.Balance, row.Provider, row.EmailDate)
+			}
+
+			query := fmt.Sprintf(`
+				INSERT INTO price_disks
+				(article, manufacturer, model, width, diameter, drilling, radius,
+				 central_hole, color, store, balance, provider, email_date, isimport)
+				VALUES %s
+			`, strings.Join(placeholders, ","))
+
+			d.logger.Debug("Executing INSERT query",
+				zap.Int("batch_num", batchNum),
+				zap.Int("values_count", len(values)),
+				zap.Int("placeholders_count", len(placeholders)))
+
+			result, err := tx.ExecContext(ctx, query, values...)
+			if err != nil {
+				d.logger.Error("Failed to insert batch",
+					zap.Int("batch_num", batchNum),
+					zap.Int("batch_start", i),
+					zap.Int("batch_size", len(batch)),
+					zap.Error(err))
+				return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+			}
+
+			rowsAffected, _ := result.RowsAffected()
+			d.logger.Info("Batch inserted successfully",
+				zap.Int("batch_num", batchNum),
+				zap.Int64("rows_affected", rowsAffected))
+		}
+	}
+
+	d.logger.Info("All batches inserted, marking email as processed",
+		zap.String("message_id", messageID))
+
+	// Mark email as processed with email date from first row
+	var emailDate time.Time
+	if len(rows) > 0 {
+		emailDate = rows[0].EmailDate
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`,
+		messageID, emailDate,
+	)
+	if err != nil {
+		d.logger.Error("Failed to mark email as processed",
+			zap.String("message_id", messageID),
+			zap.Error(err))
+		return fmt.Errorf("failed to mark email as processed: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	d.logger.Info("Email marked as processed",
+		zap.String("message_id", messageID),
+		zap.Int64("rows_affected", rowsAffected))
+
+	d.logger.Info("Committing transaction",
+		zap.Int("total_rows", len(rows)),
+		zap.String("message_id", messageID))
+
+	if err := tx.Commit(); err != nil {
+		d.logger.Error("Failed to commit transaction",
+			zap.Int("total_rows", len(rows)),
+			zap.String("message_id", messageID),
+			zap.Error(err))
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	d.logger.Info("Transaction committed successfully - disk price data saved to database",
 		zap.Int("total_rows", len(rows)),
 		zap.String("message_id", messageID))
 
