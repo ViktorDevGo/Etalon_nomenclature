@@ -24,6 +24,17 @@ type diskColumnMapping struct {
 	nomenclature int
 	balance      map[int]string // index -> store name (for БИГМАШИН: multiple "Остаток*" columns)
 	storeColumn  int            // For ЗАПАСКА/БРИНЕКС single "Склад" column
+
+	// Structured columns (for БИГМАШИН and БРИНЕКС)
+	manufacturer int
+	model        int
+	width        int
+	diameter     int
+	drilling     int
+	radius       int
+	centralHole  int
+	color        int
+	balanceCol   int // Single balance column (for БРИНЕКС)
 }
 
 // NewDiskParser creates a new disk parser
@@ -116,10 +127,12 @@ func (p *DiskParser) shouldProcessSheet(sheetName string, provider string) bool 
 		"лист_1",
 		"sheet1",
 		"диски",
+		"диски легковые",
+		"диски грузовые",
 	}
 
 	for _, allowed := range allowedSheets {
-		if normalized == allowed {
+		if normalized == allowed || strings.Contains(normalized, allowed) {
 			return true
 		}
 	}
@@ -192,6 +205,14 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 			continue
 		}
 
+		// Skip header numbering rows (like "1, 2, 3, 4, 5...")
+		if p.isHeaderNumberingRow(cols) {
+			p.logger.Debug("Skipping header numbering row",
+				zap.String("sheet", sheetName),
+				zap.Int("row", rowNum))
+			continue
+		}
+
 		// For ЗАПАСКА, only parse if we're in disk section
 		if strings.Contains(provider, "ЗАПАСКА") && !inDiskSection {
 			continue
@@ -213,6 +234,35 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 	}
 
 	return result, nil
+}
+
+// isHeaderNumberingRow checks if row contains sequential column numbers (1, 2, 3, 4...)
+func (p *DiskParser) isHeaderNumberingRow(cols []string) bool {
+	if len(cols) < 3 {
+		return false
+	}
+
+	// Check if first few non-empty cells are sequential numbers
+	numberCount := 0
+	for i, col := range cols {
+		trimmed := strings.TrimSpace(col)
+		if trimmed == "" {
+			continue
+		}
+
+		// Check if it's a number matching the column position
+		if trimmed == fmt.Sprintf("%d", i+1) ||
+		   trimmed == fmt.Sprintf("%d", numberCount+1) {
+			numberCount++
+			if numberCount >= 3 {
+				return true
+			}
+		} else {
+			break
+		}
+	}
+
+	return false
 }
 
 // containsDisksMarker checks if any column contains the disks section marker
@@ -248,6 +298,15 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 		nomenclature: -1,
 		balance:      make(map[int]string),
 		storeColumn:  -1,
+		manufacturer: -1,
+		model:        -1,
+		width:        -1,
+		diameter:     -1,
+		drilling:     -1,
+		radius:       -1,
+		centralHole:  -1,
+		color:        -1,
+		balanceCol:   -1,
 	}
 
 	for i, col := range cols {
@@ -255,7 +314,9 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 
 		switch {
 		case strings.Contains(normalized, "артикул"):
-			mapping.article = i
+			if mapping.article < 0 {
+				mapping.article = i
+			}
 		case strings.Contains(normalized, "номенклатура"):
 			mapping.nomenclature = i
 		case strings.HasPrefix(normalized, "остаток"):
@@ -265,14 +326,54 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 				storeName = "Основной"
 			}
 			mapping.balance[i] = storeName
+			// Also set single balance column for providers that use it
+			if mapping.balanceCol < 0 && strings.Contains(normalized, "на складе") {
+				mapping.balanceCol = i
+			}
 		case strings.Contains(normalized, "склад") && mapping.storeColumn < 0:
 			mapping.storeColumn = i
+
+		// Structured columns
+		case normalized == "производитель":
+			mapping.manufacturer = i
+		case normalized == "модель":
+			mapping.model = i
+		case normalized == "ширина" || strings.Contains(normalized, "ширина диска"):
+			mapping.width = i
+		case normalized == "диаметр":
+			mapping.diameter = i
+		case normalized == "pcd" || normalized == "psd":
+			mapping.drilling = i
+		case normalized == "вылет" || normalized == "ет" || normalized == "et":
+			mapping.radius = i
+		case normalized == "dia" || normalized == "св" || strings.Contains(normalized, "центральное"):
+			mapping.centralHole = i
+		case strings.Contains(normalized, "цвет") || strings.Contains(normalized, "описание цвета"):
+			mapping.color = i
 		}
 	}
 
-	// Required columns: article and nomenclature
+	// Check if we have structured columns (БИГМАШИН or БРИНЕКС format)
+	hasStructuredColumns := mapping.diameter >= 0 && mapping.width >= 0 && mapping.drilling >= 0
+
+	if hasStructuredColumns {
+		p.logger.Info("Found structured disk columns",
+			zap.Int("article", mapping.article),
+			zap.Int("manufacturer", mapping.manufacturer),
+			zap.Int("model", mapping.model),
+			zap.Int("width", mapping.width),
+			zap.Int("diameter", mapping.diameter),
+			zap.Int("drilling", mapping.drilling),
+			zap.Int("radius", mapping.radius),
+			zap.Int("central_hole", mapping.centralHole),
+			zap.Int("color", mapping.color),
+			zap.Int("balance_columns", len(mapping.balance)))
+		return mapping
+	}
+
+	// Fallback to nomenclature-based parsing (ЗАПАСКА format)
 	if mapping.article >= 0 && mapping.nomenclature >= 0 {
-		p.logger.Info("Successfully found required disk columns",
+		p.logger.Info("Found nomenclature-based disk columns",
 			zap.Int("article", mapping.article),
 			zap.Int("nomenclature", mapping.nomenclature),
 			zap.Int("balance_columns", len(mapping.balance)),
@@ -290,24 +391,41 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 	}
 
 	article := p.getColumn(cols, mapping.article)
-	nomenclature := p.getColumn(cols, mapping.nomenclature)
-
-	if article == "" || nomenclature == "" {
-		return nil, fmt.Errorf("missing article or nomenclature")
+	if article == "" {
+		return nil, fmt.Errorf("missing article")
 	}
 
-	// Parse disk specifications from nomenclature
-	diskData, err := p.parseDiskSpecifications(nomenclature, provider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse disk specifications: %w", err)
-	}
+	// Check if we have structured columns
+	hasStructuredColumns := mapping.diameter >= 0 && mapping.width >= 0 && mapping.drilling >= 0
 
-	// Validate parsed data
-	if err := p.validateDiskData(diskData); err != nil {
-		p.logger.Warn("Disk data validation failed",
-			zap.String("nomenclature", nomenclature),
-			zap.Error(err))
-		return nil, err
+	var diskData *db.PriceDiskRow
+	var err error
+
+	if hasStructuredColumns {
+		// Parse from structured columns (БИГМАШИН/БРИНЕКС)
+		diskData, err = p.parseDiskFromColumns(cols, mapping)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse from columns: %w", err)
+		}
+	} else {
+		// Parse from nomenclature (ЗАПАСКА)
+		nomenclature := p.getColumn(cols, mapping.nomenclature)
+		if nomenclature == "" {
+			return nil, fmt.Errorf("missing nomenclature")
+		}
+
+		diskData, err = p.parseDiskSpecifications(nomenclature, provider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse disk specifications: %w", err)
+		}
+
+		// Validate parsed data
+		if err := p.validateDiskData(diskData); err != nil {
+			p.logger.Warn("Disk data validation failed",
+				zap.String("nomenclature", nomenclature),
+				zap.Error(err))
+			return nil, err
+		}
 	}
 
 	diskData.Article = article
@@ -330,22 +448,108 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 			row.Balance = balance
 			result = append(result, row)
 		}
-	} else if mapping.storeColumn >= 0 {
-		// Single store column (for ЗАПАСКА/БРИНЕКС)
-		store := p.getColumn(cols, mapping.storeColumn)
-		if store != "" {
+	} else if mapping.balanceCol >= 0 && mapping.storeColumn >= 0 {
+		// Single balance and store columns (for БРИНЕКС)
+		balanceStr := p.getColumn(cols, mapping.balanceCol)
+		balance, err := p.parseInt(balanceStr)
+		if err == nil && balance > 0 {
+			store := p.getColumn(cols, mapping.storeColumn)
 			diskData.Store = store
-			diskData.Balance = 1 // Default balance if not specified
+			diskData.Balance = balance
 			result = append(result, *diskData)
 		}
 	} else {
-		// No store/balance info
+		// No store/balance info or fallback
 		diskData.Store = "Основной"
 		diskData.Balance = 1
 		result = append(result, *diskData)
 	}
 
 	return result, nil
+}
+
+// parseDiskFromColumns parses disk data from structured columns
+func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapping) (*db.PriceDiskRow, error) {
+	disk := &db.PriceDiskRow{}
+
+	// Parse manufacturer
+	if mapping.manufacturer >= 0 {
+		disk.Manufacturer = p.getColumn(cols, mapping.manufacturer)
+	}
+
+	// Parse model
+	if mapping.model >= 0 {
+		disk.Model = p.getColumn(cols, mapping.model)
+	}
+
+	// Parse width (required)
+	widthStr := p.getColumn(cols, mapping.width)
+	if widthStr != "" {
+		width, err := strconv.ParseFloat(widthStr, 64)
+		if err == nil {
+			disk.Width = width
+		}
+	}
+
+	// Parse diameter (required)
+	diameterStr := p.getColumn(cols, mapping.diameter)
+	if diameterStr != "" {
+		diameter, err := strconv.ParseFloat(diameterStr, 64)
+		if err == nil {
+			disk.Diameter = diameter
+		}
+	}
+
+	// Parse drilling (PCD)
+	if mapping.drilling >= 0 {
+		disk.Drilling = p.getColumn(cols, mapping.drilling)
+	}
+
+	// Parse radius (ET/Вылет)
+	if mapping.radius >= 0 {
+		radiusStr := p.getColumn(cols, mapping.radius)
+		if radiusStr != "" {
+			// Add "ET" prefix if not present
+			if !strings.HasPrefix(strings.ToUpper(radiusStr), "ET") {
+				radiusStr = "ET" + radiusStr
+			}
+			disk.Radius = radiusStr
+		}
+	}
+
+	// Parse central hole (DIA/СВ)
+	if mapping.centralHole >= 0 {
+		centralHoleStr := p.getColumn(cols, mapping.centralHole)
+		if centralHoleStr != "" {
+			// Add prefix if not present
+			if !strings.HasPrefix(strings.ToUpper(centralHoleStr), "D") &&
+				!strings.Contains(strings.ToLower(centralHoleStr), "dia") {
+				centralHoleStr = "D" + centralHoleStr
+			}
+			disk.CentralHole = centralHoleStr
+		}
+	}
+
+	// Parse color
+	if mapping.color >= 0 {
+		disk.Color = p.getColumn(cols, mapping.color)
+	}
+
+	// Validate
+	if disk.Width == 0 || disk.Diameter == 0 {
+		return nil, fmt.Errorf("missing required width or diameter")
+	}
+
+	// Basic validation
+	if disk.Width < 4.0 || disk.Width > 15.0 {
+		return nil, fmt.Errorf("invalid width: %.1f", disk.Width)
+	}
+
+	if disk.Diameter < 12 || disk.Diameter > 24 {
+		return nil, fmt.Errorf("invalid diameter: %.1f", disk.Diameter)
+	}
+
+	return disk, nil
 }
 
 // parseDiskSpecifications extracts disk specifications from nomenclature string
