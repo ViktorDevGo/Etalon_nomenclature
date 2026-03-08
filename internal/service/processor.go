@@ -296,13 +296,8 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		return fmt.Errorf("failed to extract any data from attachments")
 	}
 
-	// Save nomenclature data if present
+	// Log sample data for debugging
 	if len(allRows) > 0 {
-		p.logger.Info("Preparing to save nomenclature data to database",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allRows)))
-
-		// Log sample of first few rows for debugging
 		sampleSize := 3
 		if len(allRows) < sampleSize {
 			sampleSize = len(allRows)
@@ -313,32 +308,11 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 				zap.Int("row_index", i),
 				zap.String("article", row.Article),
 				zap.String("brand", row.Brand),
-				zap.String("type", row.Type),
-				zap.String("size_model", row.SizeModel),
-				zap.String("nomenclature", row.Nomenclature),
-				zap.Float64("mrc", row.MRC))
+				zap.String("nomenclature", row.Nomenclature))
 		}
-
-		if err := p.db.InsertNomenclatureWithEmail(ctx, allRows, email.MessageID); err != nil {
-			p.logger.Error("Failed to save nomenclature data",
-				zap.String("message_id", email.MessageID),
-				zap.Int("total_rows", len(allRows)),
-				zap.Error(err))
-			return fmt.Errorf("failed to save nomenclature: %w", err)
-		}
-
-		p.logger.Info("Successfully saved nomenclature data",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allRows)))
 	}
 
-	// Save price data if present
 	if len(allPriceRows) > 0 {
-		p.logger.Info("Preparing to save price data to database",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allPriceRows)))
-
-		// Log sample of first few price rows
 		sampleSize := 3
 		if len(allPriceRows) < sampleSize {
 			sampleSize = len(allPriceRows)
@@ -348,32 +322,11 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			p.logger.Debug("Sample price row",
 				zap.Int("row_index", i),
 				zap.String("article", row.Article),
-				zap.Float64("price", row.Price),
-				zap.Int("balance", row.Balance),
-				zap.String("store", row.Store),
 				zap.String("provider", row.Provider))
 		}
-
-		if err := p.db.InsertPriceTiresWithEmail(ctx, allPriceRows, email.MessageID); err != nil {
-			p.logger.Error("Failed to save price data",
-				zap.String("message_id", email.MessageID),
-				zap.Int("total_rows", len(allPriceRows)),
-				zap.Error(err))
-			return fmt.Errorf("failed to save prices: %w", err)
-		}
-
-		p.logger.Info("Successfully saved price data",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allPriceRows)))
 	}
 
-	// Save disk data if present
 	if len(allDiskRows) > 0 {
-		p.logger.Info("Preparing to save disk data to database",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allDiskRows)))
-
-		// Log sample of first few disk rows
 		sampleSize := 3
 		if len(allDiskRows) < sampleSize {
 			sampleSize = len(allDiskRows)
@@ -384,29 +337,26 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 				zap.Int("row_index", i),
 				zap.String("article", row.Article),
 				zap.String("manufacturer", row.Manufacturer),
-				zap.String("model", row.Model),
-				zap.Float64("width", row.Width),
-				zap.Float64("diameter", row.Diameter),
-				zap.String("drilling", row.Drilling),
-				zap.Int("balance", row.Balance),
-				zap.String("store", row.Store),
 				zap.String("provider", row.Provider))
 		}
-
-		if err := p.db.InsertPriceDisksWithEmail(ctx, allDiskRows, email.MessageID); err != nil {
-			p.logger.Error("Failed to save disk data",
-				zap.String("message_id", email.MessageID),
-				zap.Int("total_rows", len(allDiskRows)),
-				zap.Error(err))
-			return fmt.Errorf("failed to save disk prices: %w", err)
-		}
-
-		p.logger.Info("Successfully saved disk data",
-			zap.String("message_id", email.MessageID),
-			zap.Int("total_rows", len(allDiskRows)))
 	}
 
-	p.logger.Info("Successfully processed email and saved to database",
+	// Save ALL data in a SINGLE atomic transaction
+	// Email is marked as processed ONLY if ALL data saves successfully!
+	p.logger.Info("Saving all email data in atomic transaction",
+		zap.String("message_id", email.MessageID),
+		zap.Int("nomenclature_rows", len(allRows)),
+		zap.Int("price_rows", len(allPriceRows)),
+		zap.Int("disk_rows", len(allDiskRows)))
+
+	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allPriceRows, allDiskRows, email.MessageID, email.Date); err != nil {
+		p.logger.Error("Failed to save email data (transaction rolled back)",
+			zap.String("message_id", email.MessageID),
+			zap.Error(err))
+		return fmt.Errorf("failed to save email data: %w", err)
+	}
+
+	p.logger.Info("✅ Successfully processed email and saved ALL data atomically",
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
 		zap.Int("price_rows", len(allPriceRows)),

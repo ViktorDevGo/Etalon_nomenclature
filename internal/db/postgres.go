@@ -797,3 +797,268 @@ func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDi
 
 	return nil
 }
+
+// insertNomenclatureInTx inserts nomenclature data within an existing transaction
+func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows []NomenclatureRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	batchSize := 1000
+
+	// Deduplicate rows within the batch
+	articleMap := make(map[string]NomenclatureRow)
+	for _, row := range rows {
+		articleMap[row.Article] = row
+	}
+	deduplicatedRows := make([]NomenclatureRow, 0, len(articleMap))
+	for _, row := range articleMap {
+		deduplicatedRows = append(deduplicatedRows, row)
+	}
+	rows = deduplicatedRows
+
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[i:end]
+		batchNum := (i / batchSize) + 1
+
+		// Delete existing duplicates for today
+		articles := make([]string, 0, len(batch))
+		for _, row := range batch {
+			articles = append(articles, row.Article)
+		}
+
+		deleteQuery := `DELETE FROM etalon_nomenclature WHERE article = ANY($1) AND DATE(created_at) = CURRENT_DATE`
+		_, err := tx.ExecContext(ctx, deleteQuery, pq.Array(articles))
+		if err != nil {
+			return fmt.Errorf("failed to delete duplicates in batch %d: %w", batchNum, err)
+		}
+
+		// Build VALUES clause
+		values := make([]interface{}, 0, len(batch)*7)
+		placeholders := make([]string, 0, len(batch))
+
+		for idx, row := range batch {
+			placeholderStart := idx * 7
+			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
+				placeholderStart+1, placeholderStart+2, placeholderStart+3,
+				placeholderStart+4, placeholderStart+5, placeholderStart+6, placeholderStart+7))
+			values = append(values, row.Article, row.Brand, row.Type, row.SizeModel, row.Nomenclature, row.MRC, row.EmailDate)
+		}
+
+		query := fmt.Sprintf(`INSERT INTO etalon_nomenclature
+			(article, brand, type, size_model, nomenclature, mrc, email_date, isimport)
+			VALUES %s`, strings.Join(placeholders, ","))
+
+		_, err = tx.ExecContext(ctx, query, values...)
+		if err != nil {
+			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+		}
+	}
+
+	return nil
+}
+
+// insertTiresInTx inserts tire price data within an existing transaction
+func (d *Database) insertTiresInTx(ctx context.Context, tx *sql.Tx, rows []PriceTireRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	batchSize := 1000
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[i:end]
+		batchNum := (i / batchSize) + 1
+
+		values := make([]interface{}, 0, len(batch)*6)
+		placeholders := make([]string, 0, len(batch))
+
+		for idx, row := range batch {
+			placeholderStart := idx * 6
+			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, 0)",
+				placeholderStart+1, placeholderStart+2, placeholderStart+3,
+				placeholderStart+4, placeholderStart+5, placeholderStart+6))
+			values = append(values, row.Article, row.Price, row.Balance, row.Store, row.Provider, row.EmailDate)
+		}
+
+		query := fmt.Sprintf(`INSERT INTO price_tires
+			(article, price, balance, store, provider, email_date, isimport)
+			VALUES %s`, strings.Join(placeholders, ","))
+
+		_, err := tx.ExecContext(ctx, query, values...)
+		if err != nil {
+			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+		}
+	}
+
+	return nil
+}
+
+// insertDisksInTx inserts disk price data within an existing transaction
+func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []PriceDiskRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	batchSize := 1000
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[i:end]
+		batchNum := (i / batchSize) + 1
+
+		values := make([]interface{}, 0, len(batch)*13)
+		placeholders := make([]string, 0, len(batch))
+
+		for idx, row := range batch {
+			placeholderStart := idx * 13
+			placeholders = append(placeholders, fmt.Sprintf(
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
+				placeholderStart+1, placeholderStart+2, placeholderStart+3,
+				placeholderStart+4, placeholderStart+5, placeholderStart+6,
+				placeholderStart+7, placeholderStart+8, placeholderStart+9,
+				placeholderStart+10, placeholderStart+11, placeholderStart+12,
+				placeholderStart+13))
+			values = append(values,
+				row.Article, row.Manufacturer, row.Model,
+				row.Width, row.Diameter, row.Drilling,
+				row.Radius, row.CentralHole, row.Color,
+				row.Store, row.Balance, row.Provider, row.EmailDate)
+		}
+
+		query := fmt.Sprintf(`INSERT INTO price_disks
+			(article, manufacturer, model, width, diameter, drilling, radius,
+			 central_hole, color, store, balance, provider, email_date, isimport)
+			VALUES %s`, strings.Join(placeholders, ","))
+
+		_, err := tx.ExecContext(ctx, query, values...)
+		if err != nil {
+			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+		}
+	}
+
+	return nil
+}
+
+// InsertAllEmailDataWithTransaction inserts all email data (nomenclature, tires, disks)
+// in a SINGLE atomic transaction. Email is marked as processed ONLY if ALL data saves successfully.
+func (d *Database) InsertAllEmailDataWithTransaction(
+	ctx context.Context,
+	nomenclatureRows []NomenclatureRow,
+	tireRows []PriceTireRow,
+	diskRows []PriceDiskRow,
+	messageID string,
+	emailDate time.Time,
+) error {
+	d.logger.Info("Starting atomic email data transaction",
+		zap.String("message_id", messageID),
+		zap.Int("nomenclature_rows", len(nomenclatureRows)),
+		zap.Int("tire_rows", len(tireRows)),
+		zap.Int("disk_rows", len(diskRows)))
+
+	// Begin single transaction for ALL data
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		d.logger.Error("Failed to begin transaction", zap.Error(err))
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	d.logger.Info("Transaction started successfully")
+
+	// 1. Insert nomenclature data if present
+	if len(nomenclatureRows) > 0 {
+		d.logger.Info("Inserting nomenclature data",
+			zap.Int("rows", len(nomenclatureRows)))
+
+		if err := d.insertNomenclatureInTx(ctx, tx, nomenclatureRows); err != nil {
+			d.logger.Error("Failed to insert nomenclature data",
+				zap.Error(err))
+			return fmt.Errorf("failed to insert nomenclature: %w", err)
+		}
+
+		d.logger.Info("Nomenclature data inserted successfully",
+			zap.Int("rows", len(nomenclatureRows)))
+	}
+
+	// 2. Insert tire price data if present
+	if len(tireRows) > 0 {
+		d.logger.Info("Inserting tire price data",
+			zap.Int("rows", len(tireRows)))
+
+		if err := d.insertTiresInTx(ctx, tx, tireRows); err != nil {
+			d.logger.Error("Failed to insert tire data",
+				zap.Error(err))
+			return fmt.Errorf("failed to insert tires: %w", err)
+		}
+
+		d.logger.Info("Tire price data inserted successfully",
+			zap.Int("rows", len(tireRows)))
+	}
+
+	// 3. Insert disk price data if present
+	if len(diskRows) > 0 {
+		d.logger.Info("Inserting disk price data",
+			zap.Int("rows", len(diskRows)))
+
+		if err := d.insertDisksInTx(ctx, tx, diskRows); err != nil {
+			d.logger.Error("Failed to insert disk data",
+				zap.Error(err))
+			return fmt.Errorf("failed to insert disks: %w", err)
+		}
+
+		d.logger.Info("Disk price data inserted successfully",
+			zap.Int("rows", len(diskRows)))
+	}
+
+	// 4. Mark email as processed - ONLY at the end after ALL data is saved!
+	d.logger.Info("All data inserted successfully, marking email as processed",
+		zap.String("message_id", messageID))
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`,
+		messageID, emailDate,
+	)
+	if err != nil {
+		d.logger.Error("Failed to mark email as processed",
+			zap.String("message_id", messageID),
+			zap.Error(err))
+		return fmt.Errorf("failed to mark email as processed: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	d.logger.Info("Email marked as processed",
+		zap.String("message_id", messageID),
+		zap.Int64("rows_affected", rowsAffected))
+
+	// 5. Commit entire transaction
+	d.logger.Info("Committing atomic transaction",
+		zap.String("message_id", messageID),
+		zap.Int("total_nomenclature", len(nomenclatureRows)),
+		zap.Int("total_tires", len(tireRows)),
+		zap.Int("total_disks", len(diskRows)))
+
+	if err := tx.Commit(); err != nil {
+		d.logger.Error("Failed to commit transaction",
+			zap.String("message_id", messageID),
+			zap.Error(err))
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	d.logger.Info("✅ Atomic transaction committed successfully - ALL data saved",
+		zap.String("message_id", messageID),
+		zap.Int("nomenclature_rows", len(nomenclatureRows)),
+		zap.Int("tire_rows", len(tireRows)),
+		zap.Int("disk_rows", len(diskRows)))
+
+	return nil
+}
