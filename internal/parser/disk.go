@@ -434,8 +434,19 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 
 	var result []db.PriceDiskRow
 
-	// Handle balance columns (for БИГМАШИН - multiple stores)
-	if len(mapping.balance) > 0 {
+	// Priority 1: Single balance and store columns (for БРИНЕКС)
+	// Check this first because БРИНЕКС has both balance map AND storeColumn
+	if mapping.balanceCol >= 0 && mapping.storeColumn >= 0 {
+		balanceStr := p.getColumn(cols, mapping.balanceCol)
+		balance, err := p.parseInt(balanceStr)
+		if err == nil && balance > 0 {
+			store := p.getColumn(cols, mapping.storeColumn)
+			diskData.Store = store
+			diskData.Balance = balance
+			result = append(result, *diskData)
+		}
+	} else if len(mapping.balance) > 0 {
+		// Priority 2: Handle balance columns (for БИГМАШИН - multiple stores)
 		for balanceIdx, storeName := range mapping.balance {
 			balanceStr := p.getColumn(cols, balanceIdx)
 			balance, err := p.parseInt(balanceStr)
@@ -448,18 +459,8 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 			row.Balance = balance
 			result = append(result, row)
 		}
-	} else if mapping.balanceCol >= 0 && mapping.storeColumn >= 0 {
-		// Single balance and store columns (for БРИНЕКС)
-		balanceStr := p.getColumn(cols, mapping.balanceCol)
-		balance, err := p.parseInt(balanceStr)
-		if err == nil && balance > 0 {
-			store := p.getColumn(cols, mapping.storeColumn)
-			diskData.Store = store
-			diskData.Balance = balance
-			result = append(result, *diskData)
-		}
 	} else {
-		// No store/balance info or fallback
+		// Priority 3: No store/balance info or fallback
 		diskData.Store = "Основной"
 		diskData.Balance = 1
 		result = append(result, *diskData)
