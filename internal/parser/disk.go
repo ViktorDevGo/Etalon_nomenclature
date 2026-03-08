@@ -388,17 +388,23 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 	for i := startIdx; i < len(parts); i++ {
 		part := parts[i]
 
-		// Width x Diameter (e.g., "6.0*15" or "6.0х15")
-		if strings.Contains(part, "*") || strings.Contains(part, "х") || strings.Contains(part, "x") {
-			if err := p.parseWidthDiameter(part, disk); err == nil {
-				continue
+		// Width x Diameter (e.g., "6.0*15" or "6.5*17")
+		// Must have decimal point OR both numbers in 4-15 range (width) and 12-24 range (diameter)
+		if (strings.Contains(part, "*") || strings.Contains(part, "х") || strings.Contains(part, "x")) && disk.Width == 0 {
+			if p.isWidthDiameter(part) {
+				if err := p.parseWidthDiameter(part, disk); err == nil {
+					continue
+				}
 			}
 		}
 
 		// Drilling (e.g., "4*100" or "5x114.3")
-		if regexp.MustCompile(`^\d+[*xх]\d+`).MatchString(part) {
-			disk.Drilling = part
-			continue
+		// First number is 3-8 (bolt count), second is 50+ (PCD in mm)
+		if (strings.Contains(part, "*") || strings.Contains(part, "х") || strings.Contains(part, "x")) && disk.Drilling == "" {
+			if p.isDrilling(part) {
+				disk.Drilling = part
+				continue
+			}
 		}
 
 		// Radius (e.g., "ET40")
@@ -414,7 +420,7 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 		}
 
 		// Model (if not yet set and looks like a model code)
-		if disk.Model == "" && regexp.MustCompile(`^[A-Z0-9-]+$`).MatchString(strings.ToUpper(part)) {
+		if disk.Model == "" && regexp.MustCompile(`^[A-Za-zА-Яа-я0-9-]+$`).MatchString(part) && len(part) <= 20 {
 			disk.Model = part
 			continue
 		}
@@ -440,17 +446,21 @@ func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*db.Price
 		part := parts[i]
 
 		// Width x Diameter (e.g., "6.5х16" or "6.5x16")
-		if (strings.Contains(part, "х") || strings.Contains(part, "x")) &&
-			regexp.MustCompile(`\d`).MatchString(part) {
-			if err := p.parseWidthDiameter(part, disk); err == nil {
-				continue
+		// Check first to avoid confusion with drilling
+		if (strings.Contains(part, "х") || strings.Contains(part, "x")) && disk.Width == 0 {
+			if p.isWidthDiameter(part) {
+				if err := p.parseWidthDiameter(part, disk); err == nil {
+					continue
+				}
 			}
 		}
 
 		// Drilling (e.g., "5х114.3" or "5x114.3")
-		if regexp.MustCompile(`^\d+[xх]\d+\.?\d*$`).MatchString(part) && disk.Drilling == "" {
-			disk.Drilling = part
-			continue
+		if (strings.Contains(part, "х") || strings.Contains(part, "x")) && disk.Drilling == "" {
+			if p.isDrilling(part) {
+				disk.Drilling = part
+				continue
+			}
 		}
 
 		// Radius (e.g., "ЕТ40" or "ET40")
@@ -479,18 +489,68 @@ func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*db.Price
 		}
 
 		// Model - alphanumeric code
-		if disk.Model == "" && regexp.MustCompile(`[A-Z]\w*\d+`).MatchString(part) {
+		if disk.Model == "" && regexp.MustCompile(`[A-Za-zА-Яа-я]\w*\d+`).MatchString(part) {
 			disk.Model = part
 			continue
 		}
 
 		// Color - last uppercase word or code
-		if regexp.MustCompile(`^[A-Z-]+$`).MatchString(part) && !regexp.MustCompile(`\d`).MatchString(part) {
+		if regexp.MustCompile(`^[A-Za-zА-Яа-я-]+$`).MatchString(part) && !regexp.MustCompile(`\d`).MatchString(part) {
 			disk.Color = part
 		}
 	}
 
 	return disk, nil
+}
+
+// isWidthDiameter checks if a pattern like "6.5*17" is width×diameter (not drilling)
+func (p *DiskParser) isWidthDiameter(s string) bool {
+	// Replace variations
+	s = strings.ReplaceAll(s, "х", "x")
+	s = strings.ReplaceAll(s, "*", "x")
+
+	parts := strings.Split(s, "x")
+	if len(parts) != 2 {
+		return false
+	}
+
+	first, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	second, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+
+	if err1 != nil || err2 != nil {
+		return false
+	}
+
+	// Width×Diameter characteristics:
+	// - Width: 4.0-15.0 (usually has decimal point)
+	// - Diameter: 12-24 (inches)
+	// Example: 6.5*17, 7.0*16
+	return first >= 4.0 && first <= 15.0 && second >= 12 && second <= 24
+}
+
+// isDrilling checks if a pattern like "5*108" is drilling (not width×diameter)
+func (p *DiskParser) isDrilling(s string) bool {
+	// Replace variations
+	s = strings.ReplaceAll(s, "х", "x")
+	s = strings.ReplaceAll(s, "*", "x")
+
+	parts := strings.Split(s, "x")
+	if len(parts) != 2 {
+		return false
+	}
+
+	first, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	second, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+
+	if err1 != nil || err2 != nil {
+		return false
+	}
+
+	// Drilling characteristics:
+	// - Bolt count: 3-8
+	// - PCD (Pitch Circle Diameter): 50-150mm
+	// Example: 5*108, 4*100, 5*114.3
+	return first >= 3 && first <= 8 && second >= 50 && second <= 150
 }
 
 // parseWidthDiameter parses width x diameter from string like "6.5х16"
