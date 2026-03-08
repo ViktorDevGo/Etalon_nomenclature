@@ -66,7 +66,8 @@
       "Bash(/tmp/delete_bitrix.sql:*)",
       "Bash(ssh root@c37e696087932476c61fd621.twc1.net:*)",
       "Bash(PGPASSWORD='uzShH<A8S;7c.e' psql:*)",
-      "Bash(go run:*)"
+      "Bash(go run:*)",
+      "Bash(ssh viktor@c37e696087932476c61fd621.twc1.net \"cd ~/etalon-nomenclature && docker compose logs --tail=500 app | grep -E ''\\(Processing attachment|Detected|provider|disk\\)''\")"
     ]
   }
 }
