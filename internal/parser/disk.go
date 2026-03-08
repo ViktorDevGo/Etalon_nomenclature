@@ -611,15 +611,31 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 			}
 		}
 
-		// Radius (e.g., "ET40")
-		if strings.HasPrefix(strings.ToUpper(part), "ET") {
+		// Radius (e.g., "ET40" or "ЕТ40" - cyrillic ET)
+		partUpper := strings.ToUpper(part)
+		if strings.HasPrefix(partUpper, "ET") || strings.HasPrefix(part, "ЕТ") {
 			disk.Radius = part
 			continue
 		}
 
 		// Central hole (e.g., "D60.1" or "dia60.1")
-		if strings.HasPrefix(strings.ToUpper(part), "D") || strings.Contains(strings.ToLower(part), "dia") {
+		if strings.HasPrefix(partUpper, "D") || strings.Contains(strings.ToLower(part), "dia") {
 			disk.CentralHole = part
+			continue
+		}
+
+		// Central hole without prefix (e.g., "57.1" or "69.1")
+		// Must be after drilling is set and be a decimal number 40-80
+		if disk.Drilling != "" && disk.CentralHole == "" && strings.Contains(part, ".") {
+			if val, err := strconv.ParseFloat(part, 64); err == nil && val >= 40.0 && val <= 150.0 {
+				disk.CentralHole = "D" + part
+				continue
+			}
+		}
+
+		// Skip common non-data words
+		partLower := strings.ToLower(part)
+		if partLower == "паллета" || partLower == "палета" || partLower == "уценка" {
 			continue
 		}
 
@@ -707,7 +723,7 @@ func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*db.Price
 	return disk, nil
 }
 
-// isWidthDiameter checks if a pattern like "6.5*17" is width×diameter (not drilling)
+// isWidthDiameter checks if a pattern like "6.5*17" or "8,5*20" is width×diameter (not drilling)
 func (p *DiskParser) isWidthDiameter(s string) bool {
 	// Replace variations
 	s = strings.ReplaceAll(s, "х", "x")
@@ -718,8 +734,12 @@ func (p *DiskParser) isWidthDiameter(s string) bool {
 		return false
 	}
 
-	first, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-	second, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	// Replace comma with dot for European decimal format
+	firstStr := strings.ReplaceAll(strings.TrimSpace(parts[0]), ",", ".")
+	secondStr := strings.ReplaceAll(strings.TrimSpace(parts[1]), ",", ".")
+
+	first, err1 := strconv.ParseFloat(firstStr, 64)
+	second, err2 := strconv.ParseFloat(secondStr, 64)
 
 	if err1 != nil || err2 != nil {
 		return false
@@ -728,11 +748,11 @@ func (p *DiskParser) isWidthDiameter(s string) bool {
 	// Width×Diameter characteristics:
 	// - Width: 4.0-15.0 (usually has decimal point)
 	// - Diameter: 12-24 (inches)
-	// Example: 6.5*17, 7.0*16
+	// Example: 6.5*17, 7.0*16, 8,5*20
 	return first >= 4.0 && first <= 15.0 && second >= 12 && second <= 24
 }
 
-// isDrilling checks if a pattern like "5*108" is drilling (not width×diameter)
+// isDrilling checks if a pattern like "5*108" or "5*114,3" is drilling (not width×diameter)
 func (p *DiskParser) isDrilling(s string) bool {
 	// Replace variations
 	s = strings.ReplaceAll(s, "х", "x")
@@ -743,8 +763,12 @@ func (p *DiskParser) isDrilling(s string) bool {
 		return false
 	}
 
-	first, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-	second, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	// Replace comma with dot for European decimal format
+	firstStr := strings.ReplaceAll(strings.TrimSpace(parts[0]), ",", ".")
+	secondStr := strings.ReplaceAll(strings.TrimSpace(parts[1]), ",", ".")
+
+	first, err1 := strconv.ParseFloat(firstStr, 64)
+	second, err2 := strconv.ParseFloat(secondStr, 64)
 
 	if err1 != nil || err2 != nil {
 		return false
@@ -753,11 +777,11 @@ func (p *DiskParser) isDrilling(s string) bool {
 	// Drilling characteristics:
 	// - Bolt count: 3-8
 	// - PCD (Pitch Circle Diameter): 50-150mm
-	// Example: 5*108, 4*100, 5*114.3
+	// Example: 5*108, 4*100, 5*114.3, 5*114,3
 	return first >= 3 && first <= 8 && second >= 50 && second <= 150
 }
 
-// parseWidthDiameter parses width x diameter from string like "6.5х16"
+// parseWidthDiameter parses width x diameter from string like "6.5х16" or "8,5*20"
 func (p *DiskParser) parseWidthDiameter(s string, disk *db.PriceDiskRow) error {
 	// Replace different "x" variations
 	s = strings.ReplaceAll(s, "х", "x")
@@ -768,12 +792,16 @@ func (p *DiskParser) parseWidthDiameter(s string, disk *db.PriceDiskRow) error {
 		return fmt.Errorf("invalid width x diameter format")
 	}
 
-	width, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	// Replace comma with dot for decimal numbers (European format)
+	widthStr := strings.ReplaceAll(strings.TrimSpace(parts[0]), ",", ".")
+	diameterStr := strings.ReplaceAll(strings.TrimSpace(parts[1]), ",", ".")
+
+	width, err := strconv.ParseFloat(widthStr, 64)
 	if err != nil {
 		return fmt.Errorf("invalid width: %w", err)
 	}
 
-	diameter, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	diameter, err := strconv.ParseFloat(diameterStr, 64)
 	if err != nil {
 		return fmt.Errorf("invalid diameter: %w", err)
 	}
