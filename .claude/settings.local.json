@@ -64,7 +64,9 @@
       "Bash(lsof:*)",
       "Bash(ls:*)",
       "Bash(/tmp/delete_bitrix.sql:*)",
-      "Bash(ssh root@c37e696087932476c61fd621.twc1.net:*)"
+      "Bash(ssh root@c37e696087932476c61fd621.twc1.net:*)",
+      "Bash(PGPASSWORD='uzShH<A8S;7c.e' psql:*)",
+      "Bash(go run:*)"
     ]
   }
 }

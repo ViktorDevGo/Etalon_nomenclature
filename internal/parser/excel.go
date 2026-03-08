@@ -106,6 +106,7 @@ func (p *Parser) parseSheet(f *excelize.File, sheetName string, emailDate time.T
 	var mapping *columnMapping
 	var result []db.NomenclatureRow
 	rowNum := 0
+	inTiresSection := false // Track if we're in the tires section
 
 	for rows.Next() {
 		rowNum++
@@ -122,6 +123,26 @@ func (p *Parser) parseSheet(f *excelize.File, sheetName string, emailDate time.T
 			continue
 		}
 
+		// Check for section markers (Шины/Диски) in any column
+		if p.containsTiresMarker(cols) {
+			inTiresSection = true
+			p.logger.Info("Found tires section marker",
+				zap.String("sheet", sheetName),
+				zap.Int("row", rowNum))
+			continue
+		}
+
+		if p.containsWheelsMarker(cols) {
+			if inTiresSection {
+				p.logger.Info("Found wheels section marker - stopping tire parsing",
+					zap.String("sheet", sheetName),
+					zap.Int("row", rowNum),
+					zap.Int("total_tires_parsed", len(result)))
+				break // Stop parsing when we hit the wheels section
+			}
+			continue
+		}
+
 		// Find header row
 		if mapping == nil {
 			mapping = p.findColumns(cols)
@@ -133,6 +154,14 @@ func (p *Parser) parseSheet(f *excelize.File, sheetName string, emailDate time.T
 				continue
 			}
 			// Skip rows until we find headers
+			continue
+		}
+
+		// Only parse rows if we're in the tires section
+		if !inTiresSection {
+			p.logger.Debug("Skipping row - not in tires section yet",
+				zap.String("sheet", sheetName),
+				zap.Int("row", rowNum))
 			continue
 		}
 
@@ -306,4 +335,32 @@ func (p *Parser) parseFloat(s string) (float64, error) {
 	s = strings.ReplaceAll(s, ",", ".")
 
 	return strconv.ParseFloat(s, 64)
+}
+
+// containsTiresMarker checks if any column contains the tires section marker
+func (p *Parser) containsTiresMarker(cols []string) bool {
+	for _, col := range cols {
+		normalized := strings.TrimSpace(strings.ToLower(col))
+		// Check for patterns like "01 Шины", "Шины", "01 шины", etc.
+		if strings.Contains(normalized, "шины") ||
+		   normalized == "01 шины" ||
+		   strings.HasPrefix(normalized, "01") && strings.Contains(normalized, "шин") {
+			return true
+		}
+	}
+	return false
+}
+
+// containsWheelsMarker checks if any column contains the wheels/discs section marker
+func (p *Parser) containsWheelsMarker(cols []string) bool {
+	for _, col := range cols {
+		normalized := strings.TrimSpace(strings.ToLower(col))
+		// Check for patterns like "02 Диски", "Диски", "02 диски", etc.
+		if strings.Contains(normalized, "диски") ||
+		   normalized == "02 диски" ||
+		   strings.HasPrefix(normalized, "02") && strings.Contains(normalized, "диск") {
+			return true
+		}
+	}
+	return false
 }
