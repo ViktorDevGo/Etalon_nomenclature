@@ -370,9 +370,12 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 
 		// Only create row if balance > 0
 		if balance > 0 {
-			store := ""
+			store := "Основной" // Default store for ЗАПАСКА/БРИНЕКС
 			if mapping.storeColumn >= 0 {
-				store = p.getColumn(cols, mapping.storeColumn)
+				storeValue := p.getColumn(cols, mapping.storeColumn)
+				if storeValue != "" {
+					store = storeValue
+				}
 			}
 
 			rows = append(rows, db.PriceTireRow{
