@@ -828,8 +828,8 @@ func (p *DiskParser) validateDiskData(disk *db.PriceDiskRow) error {
 		return fmt.Errorf("manufacturer contains only numbers: %s", disk.Manufacturer)
 	}
 
-	// Drilling should match pattern like "4x100" or "5x114.3"
-	if disk.Drilling != "" && !regexp.MustCompile(`^\d+[*xх]\d+\.?\d*$`).MatchString(disk.Drilling) {
+	// Drilling should match pattern like "4x100" or "5x114.3" or "5*114,3"
+	if disk.Drilling != "" && !regexp.MustCompile(`^\d+[*xх]\d+[.,]?\d*$`).MatchString(disk.Drilling) {
 		return fmt.Errorf("invalid drilling format: %s", disk.Drilling)
 	}
 
