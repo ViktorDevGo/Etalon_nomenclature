@@ -135,6 +135,7 @@ type PriceDiskRow struct {
 	Radius       string
 	CentralHole  string
 	Color        string
+	Price        float64
 	Store        string
 	Balance      int
 	Provider     string
@@ -705,30 +706,30 @@ func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDi
 				zap.Int("batch_start", i),
 				zap.Int("batch_size", len(batch)))
 
-			// Build VALUES clause - 13 fields
-			values := make([]interface{}, 0, len(batch)*13)
+			// Build VALUES clause - 14 fields (added price)
+			values := make([]interface{}, 0, len(batch)*14)
 			placeholders := make([]string, 0, len(batch))
 
 			for idx, row := range batch {
-				placeholderStart := idx * 13
+				placeholderStart := idx * 14
 				placeholders = append(placeholders, fmt.Sprintf(
-					"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
+					"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
 					placeholderStart+1, placeholderStart+2, placeholderStart+3,
 					placeholderStart+4, placeholderStart+5, placeholderStart+6,
 					placeholderStart+7, placeholderStart+8, placeholderStart+9,
 					placeholderStart+10, placeholderStart+11, placeholderStart+12,
-					placeholderStart+13))
+					placeholderStart+13, placeholderStart+14))
 				values = append(values,
 					row.Article, row.Manufacturer, row.Model,
 					row.Width, row.Diameter, row.Drilling,
 					row.Radius, row.CentralHole, row.Color,
-					row.Store, row.Balance, row.Provider, row.EmailDate)
+					row.Price, row.Store, row.Balance, row.Provider, row.EmailDate)
 			}
 
 			query := fmt.Sprintf(`
 				INSERT INTO price_disks
 				(article, manufacturer, model, width, diameter, drilling, radius,
-				 central_hole, color, store, balance, provider, email_date, isimport)
+				 central_hole, color, price, store, balance, provider, email_date, isimport)
 				VALUES %s
 			`, strings.Join(placeholders, ","))
 
@@ -916,28 +917,28 @@ func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []Price
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		values := make([]interface{}, 0, len(batch)*13)
+		values := make([]interface{}, 0, len(batch)*14)
 		placeholders := make([]string, 0, len(batch))
 
 		for idx, row := range batch {
-			placeholderStart := idx * 13
+			placeholderStart := idx * 14
 			placeholders = append(placeholders, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
+				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
 				placeholderStart+1, placeholderStart+2, placeholderStart+3,
 				placeholderStart+4, placeholderStart+5, placeholderStart+6,
 				placeholderStart+7, placeholderStart+8, placeholderStart+9,
 				placeholderStart+10, placeholderStart+11, placeholderStart+12,
-				placeholderStart+13))
+				placeholderStart+13, placeholderStart+14))
 			values = append(values,
 				row.Article, row.Manufacturer, row.Model,
 				row.Width, row.Diameter, row.Drilling,
 				row.Radius, row.CentralHole, row.Color,
-				row.Store, row.Balance, row.Provider, row.EmailDate)
+				row.Price, row.Store, row.Balance, row.Provider, row.EmailDate)
 		}
 
 		query := fmt.Sprintf(`INSERT INTO price_disks
 			(article, manufacturer, model, width, diameter, drilling, radius,
-			 central_hole, color, store, balance, provider, email_date, isimport)
+			 central_hole, color, price, store, balance, provider, email_date, isimport)
 			VALUES %s`, strings.Join(placeholders, ","))
 
 		_, err := tx.ExecContext(ctx, query, values...)

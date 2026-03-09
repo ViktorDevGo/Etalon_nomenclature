@@ -22,6 +22,7 @@ type DiskParser struct {
 type diskColumnMapping struct {
 	article      int
 	nomenclature int
+	price        int            // Price column
 	balance      map[int]string // index -> store name (for БИГМАШИН: multiple "Остаток*" columns)
 	storeColumn  int            // For ЗАПАСКА/БРИНЕКС single "Склад" column
 
@@ -296,6 +297,7 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 	mapping := &diskColumnMapping{
 		article:      -1,
 		nomenclature: -1,
+		price:        -1,
 		balance:      make(map[int]string),
 		storeColumn:  -1,
 		manufacturer: -1,
@@ -319,6 +321,12 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 			}
 		case strings.Contains(normalized, "номенклатура"):
 			mapping.nomenclature = i
+		case strings.Contains(normalized, "оптовая") ||
+			(strings.Contains(normalized, "цена") && !strings.Contains(normalized, "розн")):
+			// Match "Оптовая", "Оптовая цена", or just "Цена" (but not "Розница")
+			if mapping.price < 0 {
+				mapping.price = i
+			}
 		case strings.HasPrefix(normalized, "остаток"):
 			// Extract store name from "Остаток XXX"
 			storeName := strings.TrimSpace(strings.TrimPrefix(normalized, "остаток"))
@@ -425,6 +433,20 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 				zap.String("nomenclature", nomenclature),
 				zap.Error(err))
 			return nil, err
+		}
+
+		// Extract price from column (for ЗАПАСКА: "Оптовая цена")
+		if mapping.price >= 0 {
+			priceStr := p.getColumn(cols, mapping.price)
+			if priceStr != "" {
+				// Remove spaces and replace comma with dot
+				priceStr = strings.ReplaceAll(priceStr, " ", "")
+				priceStr = strings.ReplaceAll(priceStr, ",", ".")
+				price, err := strconv.ParseFloat(priceStr, 64)
+				if err == nil {
+					diskData.Price = price
+				}
+			}
 		}
 	}
 
@@ -534,6 +556,20 @@ func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapp
 	// Parse color
 	if mapping.color >= 0 {
 		disk.Color = p.getColumn(cols, mapping.color)
+	}
+
+	// Parse price
+	if mapping.price >= 0 {
+		priceStr := p.getColumn(cols, mapping.price)
+		if priceStr != "" {
+			// Remove spaces and replace comma with dot
+			priceStr = strings.ReplaceAll(priceStr, " ", "")
+			priceStr = strings.ReplaceAll(priceStr, ",", ".")
+			price, err := strconv.ParseFloat(priceStr, 64)
+			if err == nil {
+				disk.Price = price
+			}
+		}
 	}
 
 	// Validate
