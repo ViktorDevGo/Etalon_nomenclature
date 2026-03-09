@@ -150,22 +150,12 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		"@mail-daemon",
 	}
 
-	// Check both From address and Message-ID
 	emailLower := strings.ToLower(email.From)
-	messageIDLower := strings.ToLower(email.MessageID)
-
 	for _, blacklisted := range blacklistedDomains {
 		if strings.Contains(emailLower, blacklisted) {
 			p.logger.Debug("Email from blacklisted domain, skipping",
 				zap.String("from", email.From),
-				zap.String("reason", "Blacklisted sender address"))
-			return nil
-		}
-		if strings.Contains(messageIDLower, blacklisted) {
-			p.logger.Debug("Email with blacklisted Message-ID, skipping",
-				zap.String("from", email.From),
-				zap.String("message_id", email.MessageID),
-				zap.String("reason", "Blacklisted message ID domain"))
+				zap.String("reason", "System/automated email"))
 			return nil
 		}
 	}
