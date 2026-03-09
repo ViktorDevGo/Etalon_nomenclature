@@ -384,6 +384,7 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 		p.logger.Info("Found nomenclature-based disk columns",
 			zap.Int("article", mapping.article),
 			zap.Int("nomenclature", mapping.nomenclature),
+			zap.Int("price", mapping.price),
 			zap.Int("balance_columns", len(mapping.balance)),
 			zap.Int("store_column", mapping.storeColumn))
 		return mapping
@@ -437,11 +438,42 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 
 		// Extract price from column (for ЗАПАСКА: "Оптовая цена")
 		if mapping.price >= 0 {
-			priceStr := p.getColumn(cols, mapping.price)
-			if priceStr != "" {
-				// Remove spaces and replace comma with dot
+			priceStrOrig := p.getColumn(cols, mapping.price)
+			if priceStrOrig != "" {
+				priceStr := priceStrOrig
+				// Parse various number formats: "7.440,00", "7.440.00", "7,440.00"
+				// Remove spaces
 				priceStr = strings.ReplaceAll(priceStr, " ", "")
-				priceStr = strings.ReplaceAll(priceStr, ",", ".")
+
+				// Detect format by analyzing separator positions
+				hasComma := strings.Contains(priceStr, ",")
+				hasDot := strings.Contains(priceStr, ".")
+
+				if hasComma && hasDot {
+					// Both separators present - determine which is decimal
+					lastComma := strings.LastIndex(priceStr, ",")
+					lastDot := strings.LastIndex(priceStr, ".")
+
+					if lastDot > lastComma {
+						// "7,440.00" - American format (comma = thousands, dot = decimal)
+						priceStr = strings.ReplaceAll(priceStr, ",", "")
+					} else {
+						// "7.440,00" - European format (dot = thousands, comma = decimal)
+						priceStr = strings.ReplaceAll(priceStr, ".", "")
+						priceStr = strings.ReplaceAll(priceStr, ",", ".")
+					}
+				} else if hasComma {
+					// Only comma - assume it's decimal separator (European)
+					priceStr = strings.ReplaceAll(priceStr, ",", ".")
+				} else if strings.Count(priceStr, ".") > 1 {
+					// Multiple dots - they are thousand separators
+					// e.g., "7.440.00" means 7440.00
+					priceStr = strings.ReplaceAll(priceStr, ".", "")
+					if len(priceStr) >= 2 {
+						priceStr = priceStr[:len(priceStr)-2] + "." + priceStr[len(priceStr)-2:]
+					}
+				}
+
 				price, err := strconv.ParseFloat(priceStr, 64)
 				if err == nil {
 					diskData.Price = price
@@ -562,9 +594,38 @@ func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapp
 	if mapping.price >= 0 {
 		priceStr := p.getColumn(cols, mapping.price)
 		if priceStr != "" {
-			// Remove spaces and replace comma with dot
+			// Parse various number formats: "7.440,00", "7.440.00", "7,440.00"
+			// Remove spaces
 			priceStr = strings.ReplaceAll(priceStr, " ", "")
-			priceStr = strings.ReplaceAll(priceStr, ",", ".")
+
+			// Detect format by analyzing separator positions
+			hasComma := strings.Contains(priceStr, ",")
+			hasDot := strings.Contains(priceStr, ".")
+
+			if hasComma && hasDot {
+				// Both separators present - determine which is decimal
+				lastComma := strings.LastIndex(priceStr, ",")
+				lastDot := strings.LastIndex(priceStr, ".")
+
+				if lastDot > lastComma {
+					// "7,440.00" - American format (comma = thousands, dot = decimal)
+					priceStr = strings.ReplaceAll(priceStr, ",", "")
+				} else {
+					// "7.440,00" - European format (dot = thousands, comma = decimal)
+					priceStr = strings.ReplaceAll(priceStr, ".", "")
+					priceStr = strings.ReplaceAll(priceStr, ",", ".")
+				}
+			} else if hasComma {
+				// Only comma - assume it's decimal separator (European)
+				priceStr = strings.ReplaceAll(priceStr, ",", ".")
+			} else if strings.Count(priceStr, ".") > 1 {
+				// Multiple dots - they are thousand separators
+				priceStr = strings.ReplaceAll(priceStr, ".", "")
+				if len(priceStr) >= 2 {
+					priceStr = priceStr[:len(priceStr)-2] + "." + priceStr[len(priceStr)-2:]
+				}
+			}
+
 			price, err := strconv.ParseFloat(priceStr, 64)
 			if err == nil {
 				disk.Price = price
