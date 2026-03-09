@@ -67,7 +67,25 @@
       "Bash(ssh root@c37e696087932476c61fd621.twc1.net:*)",
       "Bash(PGPASSWORD='uzShH<A8S;7c.e' psql:*)",
       "Bash(go run:*)",
-      "Bash(ssh viktor@c37e696087932476c61fd621.twc1.net \"cd ~/etalon-nomenclature && docker compose logs --tail=500 app | grep -E ''\\(Processing attachment|Detected|provider|disk\\)''\")"
+      "Bash(ssh viktor@c37e696087932476c61fd621.twc1.net \"cd ~/etalon-nomenclature && docker compose logs --tail=500 app | grep -E ''\\(Processing attachment|Detected|provider|disk\\)''\")",
+      "Bash(brew list:*)",
+      "Bash(docker exec:*)",
+      "Bash(ssh:*)",
+      "Bash(go clean:*)",
+      "Bash(/Users/viktor/Pro_Koleso/Etalon_nomenclature/Etalon_nomenclature/cleanup_test_data.sql:*)",
+      "Bash(git log:*)",
+      "Bash(git revert:*)",
+      "Bash(check_prod_logs.sh:*)",
+      "Bash(./check_prod_logs.sh:*)",
+      "Bash(for file in '/Users/viktor/Desktop/ПрайсБринэкс \\(2\\).xlsx' '/Users/viktor/Desktop/ПрайсБринэкс \\(3\\).xlsx' '/Users/viktor/Desktop/ПрайсБринэкс \\(4\\).xlsx')",
+      "Bash(do)",
+      "Bash(done)",
+      "Bash(for file in '/Users/viktor/Desktop/Прайс-лист ЗАПАСКА от 07.03.2026.xlsx' '/Users/viktor/Desktop/Прайс-лист ЗАПАСКА от 08.03.2026.xlsx' '/Users/viktor/Desktop/Прайс-лист ЗАПАСКА от 09.03.2026.xlsx')",
+      "Bash(PGPASSWORD='<3B;hH5EFDH' psql:*)",
+      "Bash(for file in \"/Users/viktor/Downloads/ПрайсБринэкс \\(2\\).xls\" \"/Users/viktor/Downloads/ПрайсБринэкс \\(3\\).xls\" \"/Users/viktor/Downloads/ПрайсБринэкс \\(4\\).xls\")",
+      "Bash(if [ -f \"$file\" ])",
+      "Bash(then)",
+      "Bash(echo:*)"
     ]
   }
 }
