@@ -253,16 +253,31 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			if provider == parser.ProviderZapaska || provider == parser.ProviderBrinex {
 				diskRows, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
 				if err != nil {
-					p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
-						zap.String("filename", attachment.Filename),
-						zap.String("provider", string(provider)),
-						zap.Error(err))
+					// For БРИНЕКС, disk parsing failure is critical (file always contains "Автодиски" sheet)
+					// For ЗАПАСКА, it's optional (some files may not have disk section)
+					if provider == parser.ProviderBrinex {
+						p.logger.Error("Failed to parse disk section from БРИНЕКС file (should always have disks)",
+							zap.String("filename", attachment.Filename),
+							zap.String("provider", string(provider)),
+							zap.Error(err))
+						return fmt.Errorf("failed to parse disks from БРИНЕКС file: %w", err)
+					} else {
+						p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
+							zap.String("filename", attachment.Filename),
+							zap.String("provider", string(provider)),
+							zap.Error(err))
+					}
 				} else if len(diskRows) > 0 {
 					p.logger.Info("Parsed disk section from price attachment",
 						zap.String("filename", attachment.Filename),
 						zap.String("provider", string(provider)),
 						zap.Int("rows", len(diskRows)))
 					allDiskRows = append(allDiskRows, diskRows...)
+				} else if provider == parser.ProviderBrinex {
+					// БРИНЕКС file should always have disks
+					p.logger.Error("No disks found in БРИНЕКС file (should always have disks)",
+						zap.String("filename", attachment.Filename))
+					return fmt.Errorf("no disks found in БРИНЕКС file")
 				}
 			}
 
