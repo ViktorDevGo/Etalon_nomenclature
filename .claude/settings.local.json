@@ -85,7 +85,8 @@
       "Bash(for file in \"/Users/viktor/Downloads/ПрайсБринэкс \\(2\\).xls\" \"/Users/viktor/Downloads/ПрайсБринэкс \\(3\\).xls\" \"/Users/viktor/Downloads/ПрайсБринэкс \\(4\\).xls\")",
       "Bash(if [ -f \"$file\" ])",
       "Bash(then)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(scp:*)"
     ]
   }
 }
