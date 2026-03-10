@@ -136,6 +136,9 @@ func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider st
 	headerRowsScanned := 0
 	const maxHeaderRows = 20 // Scan first 20 rows for headers (БИГМАШИН has headers at row 11)
 
+	// For ЗАПАСКА: track if we're in the tire section (before "Диски" marker)
+	inTireSection := !strings.Contains(provider, "ЗАПАСКА") // true for non-ЗАПАСКА providers
+
 	for rows.Next() {
 		rowNum++
 		cols, err := rows.Columns()
@@ -149,6 +152,30 @@ func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider st
 
 		if len(cols) == 0 {
 			continue
+		}
+
+		// For ЗАПАСКА provider, check for section markers
+		if strings.Contains(provider, "ЗАПАСКА") {
+			// Check for "Шины" marker (start of tire section)
+			if p.containsTiresMarker(cols) {
+				inTireSection = true
+				p.logger.Info("Found tires section marker",
+					zap.String("sheet", sheetName),
+					zap.Int("row", rowNum))
+				continue
+			}
+
+			// Check for "Диски" marker (end of tire section)
+			if p.containsDisksMarker(cols) {
+				if inTireSection {
+					p.logger.Info("Found disks section marker - stopping tire parsing",
+						zap.String("sheet", sheetName),
+						zap.Int("row", rowNum),
+						zap.Int("total_tires_parsed", len(result)))
+					break
+				}
+				continue
+			}
 		}
 
 		// Find header rows (may span multiple rows)
@@ -172,6 +199,11 @@ func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider st
 			if mapping == nil {
 				continue
 			}
+		}
+
+		// For ЗАПАСКА, only parse if we're in tire section
+		if strings.Contains(provider, "ЗАПАСКА") && !inTireSection {
+			continue
 		}
 
 		// Parse data row
@@ -594,4 +626,33 @@ func (p *PriceParser) parseInt(s string) (int, error) {
 	s = strings.ReplaceAll(s, ",", "")
 
 	return strconv.Atoi(s)
+}
+
+// containsTiresMarker checks if any column contains the tires section marker
+func (p *PriceParser) containsTiresMarker(cols []string) bool {
+	for _, col := range cols {
+		normalized := strings.TrimSpace(strings.ToLower(col))
+		if strings.Contains(normalized, "шины") ||
+			strings.Contains(normalized, "автошины") ||
+			normalized == "01 шины" ||
+			normalized == "01 автошины" ||
+			(strings.HasPrefix(normalized, "01") && (strings.Contains(normalized, "шин") || strings.Contains(normalized, "tire"))) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsDisksMarker checks if any column contains the disks section marker
+func (p *PriceParser) containsDisksMarker(cols []string) bool {
+	for _, col := range cols {
+		normalized := strings.TrimSpace(strings.ToLower(col))
+		if strings.Contains(normalized, "диски") ||
+			normalized == "02 диски" ||
+			normalized == "02 автодиски" ||
+			(strings.HasPrefix(normalized, "02") && strings.Contains(normalized, "диск")) {
+			return true
+		}
+	}
+	return false
 }
