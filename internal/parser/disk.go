@@ -486,6 +486,11 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 	diskData.Provider = provider
 	diskData.EmailDate = emailDate
 
+	// Validate price (must be > 0)
+	if diskData.Price <= 0 {
+		return nil, fmt.Errorf("invalid price: %.2f (must be > 0)", diskData.Price)
+	}
+
 	var result []db.PriceDiskRow
 
 	// Priority 1: Single balance and store columns (for БРИНЕКС)
@@ -581,13 +586,14 @@ func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapp
 				!strings.Contains(strings.ToLower(centralHoleStr), "dia") {
 				centralHoleStr = "D" + centralHoleStr
 			}
-			disk.CentralHole = centralHoleStr
+			disk.CentralHole = extractCentralHole(centralHoleStr)
 		}
 	}
 
 	// Parse color
 	if mapping.color >= 0 {
 		disk.Color = p.getColumn(cols, mapping.color)
+		disk.Color = cleanDiskColor(disk.Color)
 	}
 
 	// Parse price
@@ -717,8 +723,11 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 		}
 
 		// Central hole (e.g., "D60.1" or "dia60.1")
-		if strings.HasPrefix(partUpper, "D") || strings.Contains(strings.ToLower(part), "dia") {
-			disk.CentralHole = part
+		// Check: D must be followed by a digit (not a letter like "Dark", "Diamond")
+		partLower := strings.ToLower(part)
+		if (strings.HasPrefix(partUpper, "D") && len(part) > 1 && part[1] >= '0' && part[1] <= '9') ||
+			(strings.HasPrefix(partLower, "dia") && regexp.MustCompile(`dia\d`).MatchString(partLower)) {
+			disk.CentralHole = extractCentralHole(part)
 			continue
 		}
 
@@ -726,13 +735,12 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 		// Must be after drilling is set and be a decimal number 40-80
 		if disk.Drilling != "" && disk.CentralHole == "" && strings.Contains(part, ".") {
 			if val, err := strconv.ParseFloat(part, 64); err == nil && val >= 40.0 && val <= 150.0 {
-				disk.CentralHole = "D" + part
+				disk.CentralHole = extractCentralHole("D" + part)
 				continue
 			}
 		}
 
 		// Skip common non-data words
-		partLower := strings.ToLower(part)
 		if partLower == "паллета" || partLower == "палета" || partLower == "уценка" {
 			continue
 		}
@@ -796,7 +804,7 @@ func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*db.Price
 
 		// Central hole in one word (e.g., "D66.1")
 		if strings.HasPrefix(strings.ToUpper(part), "D") && regexp.MustCompile(`\d`).MatchString(part) {
-			disk.CentralHole = part
+			disk.CentralHole = extractCentralHole(part)
 			continue
 		}
 
@@ -954,4 +962,96 @@ func (p *DiskParser) parseInt(s string) (int, error) {
 	s = strings.ReplaceAll(s, ",", "")
 
 	return strconv.Atoi(s)
+}
+
+// cleanDiskColor removes junk words from disk color field
+// Examples of junk:
+// - "паллета" / "паллета," (pallet)
+// - "новый" (new)
+// - "1000 кг" / "1200кг" / "кг." (weight capacity info)
+// Input: "S паллета" → Output: "S"
+// Input: "Бархат новый" → Output: "Бархат"
+// Input: "серебро 1200кг паллета" → Output: "серебро"
+func cleanDiskColor(color string) string {
+	if color == "" {
+		return color
+	}
+
+	color = strings.TrimSpace(color)
+
+	// Remove weight capacity patterns: "1000 кг", "1200кг", etc.
+	weightPattern := regexp.MustCompile(`\d+\s*кг\.?`)
+	color = weightPattern.ReplaceAllString(color, "")
+
+	// Define junk words to remove (lowercase for case-insensitive matching)
+	junkWords := map[string]bool{
+		"паллета":  true,
+		"паллете":  true,
+		"паллет":   true,
+		"паллеты":  true,
+		"новый":    true,
+		"новая":    true,
+		"новые":    true,
+		"new":      true,
+		"кг":       true,
+		"кг.":      true,
+		"паллета,": true,
+	}
+
+	// Split into words, filter out junk, rebuild
+	words := strings.Fields(color)
+	var cleanWords []string
+
+	for _, word := range words {
+		// Remove trailing punctuation for matching
+		wordClean := strings.Trim(word, ",.;:!?")
+		wordLower := strings.ToLower(wordClean)
+
+		// Skip if it's a junk word or starts with junk
+		isJunk := false
+		if junkWords[wordLower] {
+			isJunk = true
+		} else {
+			// Check if word starts with junk (e.g., "паллета" matches "паллете")
+			for junk := range junkWords {
+				if strings.HasPrefix(wordLower, junk) && len(wordLower)-len(junk) <= 2 {
+					// Allow max 2 chars difference for declensions
+					isJunk = true
+					break
+				}
+			}
+		}
+
+		if !isJunk && wordClean != "" {
+			// Add cleaned word (without punctuation)
+			cleanWords = append(cleanWords, wordClean)
+		}
+	}
+
+	result := strings.Join(cleanWords, " ")
+	return strings.TrimSpace(result)
+}
+
+// extractCentralHole separates central hole value from color that may be glued to it
+// Input: "D60.1GRAY-FP" → Output: "D60.1"
+// Input: "dia66.1BLACK" → Output: "dia66.1"
+// Input: "D66.1" → Output: "D66.1" (no change if no color)
+func extractCentralHole(s string) string {
+	if s == "" {
+		return s
+	}
+
+	// Pattern: D or dia + number with optional decimal point
+	// Examples: D60.1, dia66.1, D73
+	pattern := regexp.MustCompile(`^(D|dia|DIA)(\d+\.?\d*)`)
+	matches := pattern.FindStringSubmatch(s)
+
+	if len(matches) >= 3 {
+		// matches[0] = full match (e.g., "D60.1")
+		// matches[1] = prefix (D, dia, DIA)
+		// matches[2] = number (60.1)
+		return matches[1] + matches[2]
+	}
+
+	return s
 }

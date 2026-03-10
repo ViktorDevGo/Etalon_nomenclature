@@ -340,6 +340,11 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 		return nil, fmt.Errorf("empty row")
 	}
 
+	// Skip category marker rows (empty article and price columns)
+	if isCategoryMarkerRow(cols, mapping) {
+		return nil, fmt.Errorf("category marker row - skipping")
+	}
+
 	// Smart search for article (handles XLS conversion issues)
 	article, foundArticle := smartFindArticle(cols, mapping)
 	if !foundArticle {
@@ -357,6 +362,11 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 	price, foundPrice := smartFindPrice(cols, mapping, p)
 	if !foundPrice {
 		return nil, fmt.Errorf("price not found in row")
+	}
+
+	// Validate price (must be > 0)
+	if price <= 0 {
+		return nil, fmt.Errorf("invalid price: %.2f (must be > 0)", price)
 	}
 
 	var rows []db.PriceTireRow

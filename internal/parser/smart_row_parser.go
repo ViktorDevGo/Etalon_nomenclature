@@ -16,6 +16,7 @@ func smartFindArticle(cols []string, mapping *priceColumnMapping) (string, bool)
 	// Сначала пробуем стандартную колонку
 	if mapping.article >= 0 && mapping.article < len(cols) {
 		article := strings.TrimSpace(cols[mapping.article])
+		article = cleanArticleEncoding(article)
 		if isLikelyArticle(article) {
 			return article, true
 		}
@@ -24,6 +25,7 @@ func smartFindArticle(cols []string, mapping *priceColumnMapping) (string, bool)
 	// Если не подошло, ищем в соседних колонках (0-3)
 	for i := 0; i < 4 && i < len(cols); i++ {
 		article := strings.TrimSpace(cols[i])
+		article = cleanArticleEncoding(article)
 		if isLikelyArticle(article) {
 			return article, true
 		}
@@ -46,8 +48,20 @@ func smartFindPrice(cols []string, mapping *priceColumnMapping, priceParser *Pri
 		}
 	}
 
+	// Создаём map для быстрой проверки balance колонок
+	balanceColumns := make(map[int]bool)
+	for balanceIdx := range mapping.balance {
+		balanceColumns[balanceIdx] = true
+	}
+
 	// Ищем в колонках 4-7 (обычно там цены)
+	// НО пропускаем колонки, которые являются balance колонками
 	for i := 4; i < 8 && i < len(cols); i++ {
+		// Пропускаем balance колонки
+		if balanceColumns[i] {
+			continue
+		}
+
 		priceStr := strings.TrimSpace(cols[i])
 		if price, err := priceParser.parseFloat(priceStr); err == nil && price > 0 && price < 500000 {
 			// Проверяем, что это не артикул (артикулы могут быть чисто числовые)
@@ -160,4 +174,54 @@ var sizePattern = regexp.MustCompile(`^\d{3}/\d{2}$`)
 func isLikelySize(s string) bool {
 	s = strings.TrimSpace(s)
 	return sizePattern.MatchString(s)
+}
+
+// isCategoryMarkerRow проверяет, является ли строка маркером категории
+// Маркеры категорий в файле "Уценённый товар" имеют:
+// - Пустую колонку артикула (обычно cols[1])
+// - Пустую колонку цены (обычно cols[3])
+// - Название категории в других колонках
+// - Число в колонке остатка (количество товаров в категории)
+func isCategoryMarkerRow(cols []string, mapping *priceColumnMapping) bool {
+	// Проверяем, что колонка артикула пустая
+	articleEmpty := true
+	if mapping.article >= 0 && mapping.article < len(cols) {
+		articleStr := strings.TrimSpace(cols[mapping.article])
+		articleEmpty = articleStr == ""
+	}
+
+	// Проверяем, что колонка цены пустая
+	priceEmpty := true
+	if mapping.price >= 0 && mapping.price < len(cols) {
+		priceStr := strings.TrimSpace(cols[mapping.price])
+		priceEmpty = priceStr == ""
+	}
+
+	// Если обе колонки пустые - это маркер категории
+	return articleEmpty && priceEmpty
+}
+
+// cleanArticleEncoding очищает артикул от кодировочного мусора
+// Проблема: библиотека github.com/extrame/xls читает старые XLS файлы с кодировкой UTF-8,
+// но файлы могут быть в Windows-1251, что приводит к появлению символов "ъ", "Ё" в начале артикулов
+// Примеры: "ъ1000023133" → "1000023133", "Ё0000000118" → "0000000118"
+func cleanArticleEncoding(article string) string {
+	if article == "" {
+		return article
+	}
+
+	// Список символов-мусора, которые могут появиться из-за неправильной кодировки
+	// в начале артикула
+	encodingGarbage := []string{"ъ", "Ъ", "Ё", "ё"}
+
+	// Удаляем кодировочный мусор из начала артикула
+	for _, garbage := range encodingGarbage {
+		if strings.HasPrefix(article, garbage) {
+			// Удаляем первый символ
+			article = article[len(garbage):]
+			break
+		}
+	}
+
+	return article
 }

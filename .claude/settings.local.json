@@ -86,7 +86,32 @@
       "Bash(if [ -f \"$file\" ])",
       "Bash(then)",
       "Bash(echo:*)",
-      "Bash(scp:*)"
+      "Bash(scp:*)",
+      "Bash(__NEW_LINE_bff5eab2833dd4ac__ cat /Users/viktor/Pro_Koleso/Etalon_nomenclature/Etalon_nomenclature/ANALYTICS_REPORT.txt)",
+      "Bash(/Users/viktor/Pro_Koleso/Etalon_nomenclature/Etalon_nomenclature/ANALYTICS_REPORT.md:*)",
+      "Bash(__NEW_LINE_56266cdd1e74e6eb__ echo \"✅ Отчет создан: ANALYTICS_REPORT.md\")",
+      "Bash(pip3 install:*)",
+      "Bash(/tmp/analytics_report.txt:*)",
+      "Bash(/Users/viktor/Pro_Koleso/Etalon_nomenclature/Etalon_nomenclature/internal/parser/disk.go:*)",
+      "Bash(/tmp/test_clean_color.go:*)",
+      "Bash(__NEW_LINE_5152d566d2c3d8d8__ go run /tmp/test_clean_color.go)",
+      "Bash(/tmp/test_clean_color_v2.go:*)",
+      "Bash(__NEW_LINE_20ec3d379a495ad9__ go run /tmp/test_clean_color_v2.go)",
+      "Bash(/tmp/test_clean_color_v3.go:*)",
+      "Bash(__NEW_LINE_a2e56eb0af04a1f3__ go run /tmp/test_clean_color_v3.go)",
+      "Bash(/tmp/test_comma.go:*)",
+      "Bash(__NEW_LINE_34455ab37caef1d3__ go run /tmp/test_comma.go)",
+      "Bash(/tmp/test_comma_v2.go:*)",
+      "Bash(__NEW_LINE_2d6c49331703de35__ go run /tmp/test_comma_v2.go)",
+      "Bash(/tmp/test_final_all.go:*)",
+      "Bash(__NEW_LINE_9f61ce35ec8eda1c__ go run /tmp/test_final_all.go)",
+      "Bash(/tmp/test_central_hole.go:*)",
+      "Bash(__NEW_LINE_96ea03743c28221a__ go run /tmp/test_central_hole.go)",
+      "Bash(__NEW_LINE_84974bd8f4ec1055__ go run /tmp/test_central_hole.go)",
+      "Bash(/tmp/test_dark_diamond.go:*)",
+      "Bash(__NEW_LINE_bedd047d4c07d146__ go run /tmp/test_dark_diamond.go)",
+      "Bash(/tmp/test_central_vs_color.go:*)",
+      "Bash(__NEW_LINE_c20ed067a785d7a6__ go run /tmp/test_central_vs_color.go)"
     ]
   }
 }
