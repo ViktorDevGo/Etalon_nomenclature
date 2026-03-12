@@ -151,6 +151,14 @@ func (p *Parser) parseSheet(f *excelize.File, sheetName string, emailDate time.T
 					zap.String("sheet", sheetName),
 					zap.Int("row", rowNum),
 					zap.Bool("has_type", mapping.hasType))
+				// If we found headers, assume we're in tires section
+				// (files without explicit "Шины" markers will work)
+				if !inTiresSection {
+					inTiresSection = true
+					p.logger.Debug("Auto-enabling tires section after finding headers",
+						zap.String("sheet", sheetName),
+						zap.Int("row", rowNum))
+				}
 				continue
 			}
 			// Skip rows until we find headers
