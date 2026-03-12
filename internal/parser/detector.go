@@ -41,6 +41,15 @@ func NewDetector(logger *zap.Logger) *Detector {
 func (d *Detector) DetectFileType(filename string) FileType {
 	normalized := strings.ToLower(filename)
 
+	// Check if filename contains "мрц" - nomenclature files (МРЦ = Минимальная Розничная Цена)
+	// These files contain recommended retail prices and nomenclature data
+	if strings.Contains(normalized, "мрц") {
+		d.logger.Info("Detected nomenclature file (МРЦ)",
+			zap.String("filename", filename),
+			zap.String("type", string(FileTypeNomenclature)))
+		return FileTypeNomenclature
+	}
+
 	// Check if filename contains "диск" - disk files
 	if strings.Contains(normalized, "диск") {
 		d.logger.Info("Detected disk file",
@@ -58,11 +67,11 @@ func (d *Detector) DetectFileType(filename string) FileType {
 		return FileTypePrice
 	}
 
-	// Default to nomenclature for backward compatibility
-	d.logger.Info("Detected nomenclature file",
+	// Default to price file for backward compatibility (most files are price lists)
+	d.logger.Info("Detected price file (default)",
 		zap.String("filename", filename),
-		zap.String("type", string(FileTypeNomenclature)))
-	return FileTypeNomenclature
+		zap.String("type", string(FileTypePrice)))
+	return FileTypePrice
 }
 
 // DetectProvider determines the provider based on email sender address
