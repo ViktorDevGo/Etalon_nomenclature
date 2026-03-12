@@ -111,7 +111,9 @@
       "Bash(/tmp/test_dark_diamond.go:*)",
       "Bash(__NEW_LINE_bedd047d4c07d146__ go run /tmp/test_dark_diamond.go)",
       "Bash(/tmp/test_central_vs_color.go:*)",
-      "Bash(__NEW_LINE_c20ed067a785d7a6__ go run /tmp/test_central_vs_color.go)"
+      "Bash(__NEW_LINE_c20ed067a785d7a6__ go run /tmp/test_central_vs_color.go)",
+      "Bash(/tmp/cleanup_analysis.txt:*)",
+      "Bash(./cleanup_project.sh:*)"
     ]
   }
 }
