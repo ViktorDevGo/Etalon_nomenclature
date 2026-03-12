@@ -193,8 +193,8 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		mrc:          -1,
 	}
 
-	// Log found columns for debugging
-	p.logger.Info("Checking row for headers",
+	// Log found columns for debugging (only at debug level to avoid log spam)
+	p.logger.Debug("Checking row for headers",
 		zap.Strings("columns", cols))
 
 	for i, col := range cols {
@@ -261,8 +261,9 @@ func (p *Parser) findColumns(cols []string) *columnMapping {
 		missing = append(missing, "мрц")
 	}
 
+	// Only log at debug level to avoid spam - this is normal when searching for header row
 	if len(missing) > 0 {
-		p.logger.Error("Required columns not found",
+		p.logger.Debug("Required columns not found in this row",
 			zap.Strings("missing", missing),
 			zap.Strings("available", cols))
 	}
