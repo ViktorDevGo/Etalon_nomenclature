@@ -1,4 +1,5 @@
 # Etalon Nomenclature Service Configuration
+# Copy this file to config.yaml and fill in your actual values
 
 # How often to check for new emails
 poll_interval: 1m
@@ -6,9 +7,12 @@ poll_interval: 1m
 # Database configuration
 database:
   # PostgreSQL connection string
-  dsn: "postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"
+  # Format: postgresql://user:password@host:port/database?sslmode=require
+  # NOTE: If password contains special characters (< > ; : @ / ? # &), URL-encode them:
+  #   < = %3C, > = %3E, ; = %3B, : = %3A, @ = %40, etc.
+  dsn: "postgresql://db_user:your_password_here@your_db_host:5432/your_database?sslmode=require"
 
-  # Path to SSL root certificate
+  # Path to SSL root certificate (if using verify-full)
   ssl_root_cert: "/app/certs/root.crt"
 
   # Connection pool settings (optional)
@@ -18,20 +22,21 @@ database:
 
 # Email mailboxes to monitor
 mailboxes:
-  # First mailbox
-  - email: "example1@domain.com"
-    password: "password1"
+  # Main mailbox for receiving price lists
+  - email: "zakupki@your-domain.ru"
+    password: "your_email_password"
     host: "mail.hosting.reg.ru"
     port: 993
 
-  # Second mailbox
-  - email: "example2@domain.com"
-    password: "password2"
-    host: "mail.hosting.reg.ru"
-    port: 993
-
-  # Add more mailboxes as needed
-  # - email: "example3@domain.com"
-  #   password: "password3"
+  # You can add multiple mailboxes
+  # - email: "sales@your-domain.ru"
+  #   password: "another_password"
   #   host: "mail.hosting.reg.ru"
   #   port: 993
+
+# Email filtering (optional)
+# Only process emails from these senders
+# Uncomment and modify as needed
+# allowed_senders:
+#   - "pna@sibzapaska.ru"
+#   - "sales@supplier.com"
