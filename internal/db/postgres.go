@@ -35,6 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_brand ON etalon_nomenclature(
 CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_isimport ON etalon_nomenclature(isimport);
 CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_created_at ON etalon_nomenclature(created_at);
 
+-- Composite index for deduplication by (article, mrc)
+-- This dramatically speeds up duplicate detection during batch inserts
+CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc);
+
 -- Table: processed_emails
 -- Tracks processed emails to prevent duplicate processing
 CREATE TABLE IF NOT EXISTS processed_emails (
@@ -287,6 +291,12 @@ func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
 		return err
 	}
 
+	// Migration 6: Add deduplication composite index for etalon_nomenclature
+	if err := d.addIndexIfNotExists(ctx, "idx_etalon_nomenclature_dedup",
+		"CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc)"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -439,36 +449,17 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 
 	d.logger.Info("Transaction started successfully")
 
-	// Insert nomenclature data in batches
+	// Insert nomenclature data in batches with deduplication by (article, mrc)
 	if len(rows) > 0 {
-		// Step 0: Deduplicate rows within the batch (keep last occurrence of each article)
-		articleMap := make(map[string]NomenclatureRow)
-		for _, row := range rows {
-			articleMap[row.Article] = row // Last occurrence wins
-		}
-
-		// Convert back to slice
-		deduplicatedRows := make([]NomenclatureRow, 0, len(articleMap))
-		for _, row := range articleMap {
-			deduplicatedRows = append(deduplicatedRows, row)
-		}
-
-		originalCount := len(rows)
-		rows = deduplicatedRows
-
-		if originalCount > len(rows) {
-			d.logger.Info("Removed duplicates within batch",
-				zap.Int("original_count", originalCount),
-				zap.Int("deduplicated_count", len(rows)),
-				zap.Int("duplicates_removed", originalCount-len(rows)))
-		}
-
 		batchSize := 1000
 		totalBatches := (len(rows) + batchSize - 1) / batchSize
-		d.logger.Info("Preparing to insert data in batches",
+		d.logger.Info("Preparing to insert data in batches with deduplication",
 			zap.Int("total_rows", len(rows)),
 			zap.Int("batch_size", batchSize),
 			zap.Int("total_batches", totalBatches))
+
+		totalInserted := int64(0)
+		totalSkipped := int64(0)
 
 		for i := 0; i < len(rows); i += batchSize {
 			end := i + batchSize
@@ -484,63 +475,54 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 				zap.Int("batch_start", i),
 				zap.Int("batch_size", len(batch)))
 
-			// Step 1: Delete existing duplicates for today
-			// Collect unique articles in this batch
-			articleMap := make(map[string]bool)
-			for _, row := range batch {
-				articleMap[row.Article] = true
-			}
-			articles := make([]string, 0, len(articleMap))
-			for article := range articleMap {
-				articles = append(articles, article)
-			}
-
-			// Delete existing records with same articles created today
-			deleteQuery := `
-				DELETE FROM etalon_nomenclature
-				WHERE article = ANY($1)
-				AND DATE(created_at) = CURRENT_DATE
-			`
-			deleteResult, err := tx.ExecContext(ctx, deleteQuery, pq.Array(articles))
-			if err != nil {
-				d.logger.Error("Failed to delete duplicates",
-					zap.Int("batch_num", batchNum),
-					zap.Error(err))
-				return fmt.Errorf("failed to delete duplicates in batch %d: %w", batchNum, err)
-			}
-
-			deletedRows, _ := deleteResult.RowsAffected()
-			if deletedRows > 0 {
-				d.logger.Info("Deleted duplicate records for today",
-					zap.Int("batch_num", batchNum),
-					zap.Int64("deleted_rows", deletedRows),
-					zap.Int("unique_articles", len(articles)))
-			}
-
-			// Step 2: Build VALUES clause for INSERT
-			values := make([]interface{}, 0, len(batch)*7)
-			placeholders := make([]string, 0, len(batch))
+			// Build array parameters for deduplication
+			articles := make([]string, len(batch))
+			brands := make([]string, len(batch))
+			types := make([]string, len(batch))
+			sizeModels := make([]string, len(batch))
+			nomenclatures := make([]string, len(batch))
+			mrcs := make([]float64, len(batch))
+			emailDates := make([]time.Time, len(batch))
 
 			for idx, row := range batch {
-				placeholderStart := idx * 7
-				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
-					placeholderStart+1, placeholderStart+2, placeholderStart+3,
-					placeholderStart+4, placeholderStart+5, placeholderStart+6, placeholderStart+7))
-				values = append(values, row.Article, row.Brand, row.Type, row.SizeModel, row.Nomenclature, row.MRC, row.EmailDate)
+				articles[idx] = strings.TrimSpace(row.Article) // Normalize: trim spaces
+				brands[idx] = row.Brand
+				types[idx] = row.Type
+				sizeModels[idx] = row.SizeModel
+				nomenclatures[idx] = row.Nomenclature
+				mrcs[idx] = row.MRC
+				emailDates[idx] = row.EmailDate
 			}
 
-			query := fmt.Sprintf(`
+			// Use INSERT ... SELECT with deduplication via NOT EXISTS
+			// Deduplication check: article (trimmed) + mrc (numeric comparison)
+			// Append-only: no DELETE, no UPDATE, only INSERT new records
+			query := `
+				WITH new_data AS (
+					SELECT * FROM unnest(
+						$1::text[], $2::text[], $3::text[], $4::text[],
+						$5::text[], $6::numeric[], $7::timestamp[]
+					) AS t(article, brand, type, size_model, nomenclature, mrc, email_date)
+				)
 				INSERT INTO etalon_nomenclature
 				(article, brand, type, size_model, nomenclature, mrc, email_date, isimport)
-				VALUES %s
-			`, strings.Join(placeholders, ","))
+				SELECT article, brand, type, size_model, nomenclature, mrc, email_date, 0
+				FROM new_data nd
+				WHERE NOT EXISTS (
+					SELECT 1 FROM etalon_nomenclature en
+					WHERE TRIM(en.article) = TRIM(nd.article)
+					  AND en.mrc = nd.mrc
+				)
+			`
 
-			d.logger.Debug("Executing INSERT query",
+			d.logger.Debug("Executing INSERT with deduplication by (article, mrc)",
 				zap.Int("batch_num", batchNum),
-				zap.Int("values_count", len(values)),
-				zap.Int("placeholders_count", len(placeholders)))
+				zap.Int("batch_size", len(batch)))
 
-			result, err := tx.ExecContext(ctx, query, values...)
+			result, err := tx.ExecContext(ctx, query,
+				pq.Array(articles), pq.Array(brands), pq.Array(types),
+				pq.Array(sizeModels), pq.Array(nomenclatures), pq.Array(mrcs),
+				pq.Array(emailDates))
 			if err != nil {
 				d.logger.Error("Failed to insert batch",
 					zap.Int("batch_num", batchNum),
@@ -551,10 +533,21 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 			}
 
 			rowsAffected, _ := result.RowsAffected()
-			d.logger.Info("Batch inserted successfully",
+			skipped := int64(len(batch)) - rowsAffected
+			totalInserted += rowsAffected
+			totalSkipped += skipped
+
+			d.logger.Info("Batch processed with deduplication",
 				zap.Int("batch_num", batchNum),
-				zap.Int64("rows_affected", rowsAffected))
+				zap.Int("batch_size", len(batch)),
+				zap.Int64("inserted", rowsAffected),
+				zap.Int64("skipped_duplicates", skipped))
 		}
+
+		d.logger.Info("All batches completed",
+			zap.Int("total_rows", len(rows)),
+			zap.Int64("total_inserted", totalInserted),
+			zap.Int64("total_skipped", totalSkipped))
 	}
 
 	d.logger.Info("All batches inserted, marking email as processed",
@@ -915,23 +908,13 @@ func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDi
 }
 
 // insertNomenclatureInTx inserts nomenclature data within an existing transaction
+// with deduplication by (article, mrc) - append-only, no deletes
 func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows []NomenclatureRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
 	batchSize := 1000
-
-	// Deduplicate rows within the batch
-	articleMap := make(map[string]NomenclatureRow)
-	for _, row := range rows {
-		articleMap[row.Article] = row
-	}
-	deduplicatedRows := make([]NomenclatureRow, 0, len(articleMap))
-	for _, row := range articleMap {
-		deduplicatedRows = append(deduplicatedRows, row)
-	}
-	rows = deduplicatedRows
 
 	for i := 0; i < len(rows); i += batchSize {
 		end := i + batchSize
@@ -941,35 +924,50 @@ func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows 
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		// Delete existing duplicates for today
-		articles := make([]string, 0, len(batch))
-		for _, row := range batch {
-			articles = append(articles, row.Article)
-		}
-
-		deleteQuery := `DELETE FROM etalon_nomenclature WHERE article = ANY($1) AND DATE(created_at) = CURRENT_DATE`
-		_, err := tx.ExecContext(ctx, deleteQuery, pq.Array(articles))
-		if err != nil {
-			return fmt.Errorf("failed to delete duplicates in batch %d: %w", batchNum, err)
-		}
-
-		// Build VALUES clause
-		values := make([]interface{}, 0, len(batch)*7)
-		placeholders := make([]string, 0, len(batch))
+		// Build array parameters for deduplication
+		articles := make([]string, len(batch))
+		brands := make([]string, len(batch))
+		types := make([]string, len(batch))
+		sizeModels := make([]string, len(batch))
+		nomenclatures := make([]string, len(batch))
+		mrcs := make([]float64, len(batch))
+		emailDates := make([]time.Time, len(batch))
 
 		for idx, row := range batch {
-			placeholderStart := idx * 7
-			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
-				placeholderStart+1, placeholderStart+2, placeholderStart+3,
-				placeholderStart+4, placeholderStart+5, placeholderStart+6, placeholderStart+7))
-			values = append(values, row.Article, row.Brand, row.Type, row.SizeModel, row.Nomenclature, row.MRC, row.EmailDate)
+			articles[idx] = strings.TrimSpace(row.Article) // Normalize: trim spaces
+			brands[idx] = row.Brand
+			types[idx] = row.Type
+			sizeModels[idx] = row.SizeModel
+			nomenclatures[idx] = row.Nomenclature
+			mrcs[idx] = row.MRC
+			emailDates[idx] = row.EmailDate
 		}
 
-		query := fmt.Sprintf(`INSERT INTO etalon_nomenclature
+		// Use INSERT ... SELECT with deduplication via NOT EXISTS
+		// Deduplication check: article (trimmed) + mrc (numeric comparison)
+		// Append-only: no DELETE, no UPDATE, only INSERT new records
+		query := `
+			WITH new_data AS (
+				SELECT * FROM unnest(
+					$1::text[], $2::text[], $3::text[], $4::text[],
+					$5::text[], $6::numeric[], $7::timestamp[]
+				) AS t(article, brand, type, size_model, nomenclature, mrc, email_date)
+			)
+			INSERT INTO etalon_nomenclature
 			(article, brand, type, size_model, nomenclature, mrc, email_date, isimport)
-			VALUES %s`, strings.Join(placeholders, ","))
+			SELECT article, brand, type, size_model, nomenclature, mrc, email_date, 0
+			FROM new_data nd
+			WHERE NOT EXISTS (
+				SELECT 1 FROM etalon_nomenclature en
+				WHERE TRIM(en.article) = TRIM(nd.article)
+				  AND en.mrc = nd.mrc
+			)
+		`
 
-		_, err = tx.ExecContext(ctx, query, values...)
+		_, err := tx.ExecContext(ctx, query,
+			pq.Array(articles), pq.Array(brands), pq.Array(types),
+			pq.Array(sizeModels), pq.Array(nomenclatures), pq.Array(mrcs),
+			pq.Array(emailDates))
 		if err != nil {
 			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
 		}
