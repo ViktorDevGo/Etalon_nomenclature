@@ -70,6 +70,10 @@ CREATE INDEX IF NOT EXISTS idx_price_tires_article ON price_tires(article);
 CREATE INDEX IF NOT EXISTS idx_price_tires_provider ON price_tires(provider);
 CREATE INDEX IF NOT EXISTS idx_price_tires_created_at ON price_tires(created_at);
 
+-- Composite index for deduplication: check if exact record already exists
+-- This dramatically speeds up duplicate detection during batch inserts
+CREATE INDEX IF NOT EXISTS idx_price_tires_dedup ON price_tires(article, price, balance, store);
+
 -- Table: price_disks
 -- Stores disk/wheel prices from suppliers
 CREATE TABLE IF NOT EXISTS price_disks (
@@ -83,6 +87,7 @@ CREATE TABLE IF NOT EXISTS price_disks (
     radius TEXT,
     central_hole TEXT,
     color TEXT,
+    price NUMERIC,
     store TEXT,
     balance INTEGER DEFAULT 0,
     provider TEXT,
@@ -95,6 +100,10 @@ CREATE TABLE IF NOT EXISTS price_disks (
 CREATE INDEX IF NOT EXISTS idx_price_disks_article ON price_disks(article);
 CREATE INDEX IF NOT EXISTS idx_price_disks_provider ON price_disks(provider);
 CREATE INDEX IF NOT EXISTS idx_price_disks_created_at ON price_disks(created_at);
+
+-- Composite index for deduplication: check if exact record already exists
+-- This dramatically speeds up duplicate detection during batch inserts
+CREATE INDEX IF NOT EXISTS idx_price_disks_dedup ON price_disks(article, price, balance, store);
 `
 
 // Database represents the database connection
@@ -261,6 +270,23 @@ func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
 		return err
 	}
 
+	// Migration 3: Add price column to price_disks (if missing)
+	if err := d.addColumnIfNotExists(ctx, "price_disks", "price", "NUMERIC"); err != nil {
+		return err
+	}
+
+	// Migration 4: Add deduplication composite index for price_tires
+	if err := d.addIndexIfNotExists(ctx, "idx_price_tires_dedup",
+		"CREATE INDEX IF NOT EXISTS idx_price_tires_dedup ON price_tires(article, price, balance, store)"); err != nil {
+		return err
+	}
+
+	// Migration 5: Add deduplication composite index for price_disks
+	if err := d.addIndexIfNotExists(ctx, "idx_price_disks_dedup",
+		"CREATE INDEX IF NOT EXISTS idx_price_disks_dedup ON price_disks(article, price, balance, store)"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -297,6 +323,35 @@ func (d *Database) addColumnIfNotExists(ctx context.Context, tableName, columnNa
 		zap.String("column", columnName),
 		zap.String("type", columnType))
 
+	return nil
+}
+
+// addIndexIfNotExists adds an index if it doesn't exist
+func (d *Database) addIndexIfNotExists(ctx context.Context, indexName, createSQL string) error {
+	// Check if index exists
+	checkQuery := `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_indexes
+			WHERE indexname = $1
+		)
+	`
+
+	var exists bool
+	if err := d.db.QueryRowContext(ctx, checkQuery, indexName).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check index %s: %w", indexName, err)
+	}
+
+	if exists {
+		d.logger.Debug("Index already exists", zap.String("index", indexName))
+		return nil
+	}
+
+	// Create index
+	if _, err := d.db.ExecContext(ctx, createSQL); err != nil {
+		return fmt.Errorf("failed to create index %s: %w", indexName, err)
+	}
+
+	d.logger.Info("Created index", zap.String("index", indexName))
 	return nil
 }
 
@@ -584,30 +639,49 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 				zap.Int("batch_start", i),
 				zap.Int("batch_size", len(batch)))
 
-			// Build VALUES clause
-			values := make([]interface{}, 0, len(batch)*6)
-			placeholders := make([]string, 0, len(batch))
+			// Build array parameters for deduplication
+			articles := make([]string, len(batch))
+			prices := make([]float64, len(batch))
+			balances := make([]int, len(batch))
+			stores := make([]string, len(batch))
+			providers := make([]string, len(batch))
+			emailDates := make([]time.Time, len(batch))
 
 			for idx, row := range batch {
-				placeholderStart := idx * 6
-				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, 0)",
-					placeholderStart+1, placeholderStart+2, placeholderStart+3,
-					placeholderStart+4, placeholderStart+5, placeholderStart+6))
-				values = append(values, row.Article, row.Price, row.Balance, row.Store, row.Provider, row.EmailDate)
+				articles[idx] = row.Article
+				prices[idx] = row.Price
+				balances[idx] = row.Balance
+				stores[idx] = row.Store
+				providers[idx] = row.Provider
+				emailDates[idx] = row.EmailDate
 			}
 
-			query := fmt.Sprintf(`
-				INSERT INTO price_tires
-				(article, price, balance, store, provider, email_date, isimport)
-				VALUES %s
-			`, strings.Join(placeholders, ","))
+			// Use INSERT ... SELECT with deduplication via NOT EXISTS
+			query := `
+				WITH new_data AS (
+					SELECT * FROM unnest(
+						$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
+					) AS t(article, price, balance, store, provider, email_date)
+				)
+				INSERT INTO price_tires (article, price, balance, store, provider, email_date, isimport)
+				SELECT article, price, balance, store, provider, email_date, 0
+				FROM new_data nd
+				WHERE NOT EXISTS (
+					SELECT 1 FROM price_tires pt
+					WHERE pt.article = nd.article
+					  AND pt.price = nd.price
+					  AND pt.balance = nd.balance
+					  AND pt.store = nd.store
+				)
+			`
 
-			d.logger.Debug("Executing INSERT query",
+			d.logger.Debug("Executing INSERT with deduplication",
 				zap.Int("batch_num", batchNum),
-				zap.Int("values_count", len(values)),
-				zap.Int("placeholders_count", len(placeholders)))
+				zap.Int("batch_size", len(batch)))
 
-			result, err := tx.ExecContext(ctx, query, values...)
+			result, err := tx.ExecContext(ctx, query,
+				pq.Array(articles), pq.Array(prices), pq.Array(balances),
+				pq.Array(stores), pq.Array(providers), pq.Array(emailDates))
 			if err != nil {
 				d.logger.Error("Failed to insert batch",
 					zap.Int("batch_num", batchNum),
@@ -618,9 +692,12 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 			}
 
 			rowsAffected, _ := result.RowsAffected()
-			d.logger.Info("Batch inserted successfully",
+			skipped := int64(len(batch)) - rowsAffected
+			d.logger.Info("Batch processed with deduplication",
 				zap.Int("batch_num", batchNum),
-				zap.Int64("rows_affected", rowsAffected))
+				zap.Int("batch_size", len(batch)),
+				zap.Int64("inserted", rowsAffected),
+				zap.Int64("skipped_duplicates", skipped))
 		}
 	}
 
@@ -706,39 +783,74 @@ func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDi
 				zap.Int("batch_start", i),
 				zap.Int("batch_size", len(batch)))
 
-			// Build VALUES clause - 14 fields (added price)
-			values := make([]interface{}, 0, len(batch)*14)
-			placeholders := make([]string, 0, len(batch))
+			// Build array parameters for deduplication
+			articles := make([]string, len(batch))
+			manufacturers := make([]string, len(batch))
+			models := make([]string, len(batch))
+			widths := make([]float64, len(batch))
+			diameters := make([]float64, len(batch))
+			drillings := make([]string, len(batch))
+			radiuses := make([]string, len(batch))
+			centralHoles := make([]string, len(batch))
+			colors := make([]string, len(batch))
+			prices := make([]float64, len(batch))
+			stores := make([]string, len(batch))
+			balances := make([]int, len(batch))
+			providers := make([]string, len(batch))
+			emailDates := make([]time.Time, len(batch))
 
 			for idx, row := range batch {
-				placeholderStart := idx * 14
-				placeholders = append(placeholders, fmt.Sprintf(
-					"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
-					placeholderStart+1, placeholderStart+2, placeholderStart+3,
-					placeholderStart+4, placeholderStart+5, placeholderStart+6,
-					placeholderStart+7, placeholderStart+8, placeholderStart+9,
-					placeholderStart+10, placeholderStart+11, placeholderStart+12,
-					placeholderStart+13, placeholderStart+14))
-				values = append(values,
-					row.Article, row.Manufacturer, row.Model,
-					row.Width, row.Diameter, row.Drilling,
-					row.Radius, row.CentralHole, row.Color,
-					row.Price, row.Store, row.Balance, row.Provider, row.EmailDate)
+				articles[idx] = row.Article
+				manufacturers[idx] = row.Manufacturer
+				models[idx] = row.Model
+				widths[idx] = row.Width
+				diameters[idx] = row.Diameter
+				drillings[idx] = row.Drilling
+				radiuses[idx] = row.Radius
+				centralHoles[idx] = row.CentralHole
+				colors[idx] = row.Color
+				prices[idx] = row.Price
+				stores[idx] = row.Store
+				balances[idx] = row.Balance
+				providers[idx] = row.Provider
+				emailDates[idx] = row.EmailDate
 			}
 
-			query := fmt.Sprintf(`
+			// Use INSERT ... SELECT with deduplication via NOT EXISTS
+			query := `
+				WITH new_data AS (
+					SELECT * FROM unnest(
+						$1::text[], $2::text[], $3::text[], $4::numeric[], $5::numeric[],
+						$6::text[], $7::text[], $8::text[], $9::text[], $10::numeric[],
+						$11::text[], $12::integer[], $13::text[], $14::timestamp[]
+					) AS t(article, manufacturer, model, width, diameter, drilling, radius,
+					       central_hole, color, price, store, balance, provider, email_date)
+				)
 				INSERT INTO price_disks
 				(article, manufacturer, model, width, diameter, drilling, radius,
 				 central_hole, color, price, store, balance, provider, email_date, isimport)
-				VALUES %s
-			`, strings.Join(placeholders, ","))
+				SELECT article, manufacturer, model, width, diameter, drilling, radius,
+				       central_hole, color, price, store, balance, provider, email_date, 0
+				FROM new_data nd
+				WHERE NOT EXISTS (
+					SELECT 1 FROM price_disks pd
+					WHERE pd.article = nd.article
+					  AND pd.price = nd.price
+					  AND pd.balance = nd.balance
+					  AND pd.store = nd.store
+				)
+			`
 
-			d.logger.Debug("Executing INSERT query",
+			d.logger.Debug("Executing INSERT with deduplication",
 				zap.Int("batch_num", batchNum),
-				zap.Int("values_count", len(values)),
-				zap.Int("placeholders_count", len(placeholders)))
+				zap.Int("batch_size", len(batch)))
 
-			result, err := tx.ExecContext(ctx, query, values...)
+			result, err := tx.ExecContext(ctx, query,
+				pq.Array(articles), pq.Array(manufacturers), pq.Array(models),
+				pq.Array(widths), pq.Array(diameters), pq.Array(drillings),
+				pq.Array(radiuses), pq.Array(centralHoles), pq.Array(colors),
+				pq.Array(prices), pq.Array(stores), pq.Array(balances),
+				pq.Array(providers), pq.Array(emailDates))
 			if err != nil {
 				d.logger.Error("Failed to insert batch",
 					zap.Int("batch_num", batchNum),
@@ -749,9 +861,12 @@ func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDi
 			}
 
 			rowsAffected, _ := result.RowsAffected()
-			d.logger.Info("Batch inserted successfully",
+			skipped := int64(len(batch)) - rowsAffected
+			d.logger.Info("Batch processed with deduplication",
 				zap.Int("batch_num", batchNum),
-				zap.Int64("rows_affected", rowsAffected))
+				zap.Int("batch_size", len(batch)),
+				zap.Int64("inserted", rowsAffected),
+				zap.Int64("skipped_duplicates", skipped))
 		}
 	}
 
@@ -878,22 +993,45 @@ func (d *Database) insertTiresInTx(ctx context.Context, tx *sql.Tx, rows []Price
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		values := make([]interface{}, 0, len(batch)*6)
-		placeholders := make([]string, 0, len(batch))
+		// Build array parameters for deduplication
+		articles := make([]string, len(batch))
+		prices := make([]float64, len(batch))
+		balances := make([]int, len(batch))
+		stores := make([]string, len(batch))
+		providers := make([]string, len(batch))
+		emailDates := make([]time.Time, len(batch))
 
 		for idx, row := range batch {
-			placeholderStart := idx * 6
-			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, 0)",
-				placeholderStart+1, placeholderStart+2, placeholderStart+3,
-				placeholderStart+4, placeholderStart+5, placeholderStart+6))
-			values = append(values, row.Article, row.Price, row.Balance, row.Store, row.Provider, row.EmailDate)
+			articles[idx] = row.Article
+			prices[idx] = row.Price
+			balances[idx] = row.Balance
+			stores[idx] = row.Store
+			providers[idx] = row.Provider
+			emailDates[idx] = row.EmailDate
 		}
 
-		query := fmt.Sprintf(`INSERT INTO price_tires
-			(article, price, balance, store, provider, email_date, isimport)
-			VALUES %s`, strings.Join(placeholders, ","))
+		// Use INSERT ... SELECT with deduplication via NOT EXISTS
+		query := `
+			WITH new_data AS (
+				SELECT * FROM unnest(
+					$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
+				) AS t(article, price, balance, store, provider, email_date)
+			)
+			INSERT INTO price_tires (article, price, balance, store, provider, email_date, isimport)
+			SELECT article, price, balance, store, provider, email_date, 0
+			FROM new_data nd
+			WHERE NOT EXISTS (
+				SELECT 1 FROM price_tires pt
+				WHERE pt.article = nd.article
+				  AND pt.price = nd.price
+				  AND pt.balance = nd.balance
+				  AND pt.store = nd.store
+			)
+		`
 
-		_, err := tx.ExecContext(ctx, query, values...)
+		_, err := tx.ExecContext(ctx, query,
+			pq.Array(articles), pq.Array(prices), pq.Array(balances),
+			pq.Array(stores), pq.Array(providers), pq.Array(emailDates))
 		if err != nil {
 			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
 		}
@@ -917,31 +1055,70 @@ func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []Price
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		values := make([]interface{}, 0, len(batch)*14)
-		placeholders := make([]string, 0, len(batch))
+		// Build array parameters for deduplication
+		articles := make([]string, len(batch))
+		manufacturers := make([]string, len(batch))
+		models := make([]string, len(batch))
+		widths := make([]float64, len(batch))
+		diameters := make([]float64, len(batch))
+		drillings := make([]string, len(batch))
+		radiuses := make([]string, len(batch))
+		centralHoles := make([]string, len(batch))
+		colors := make([]string, len(batch))
+		prices := make([]float64, len(batch))
+		stores := make([]string, len(batch))
+		balances := make([]int, len(batch))
+		providers := make([]string, len(batch))
+		emailDates := make([]time.Time, len(batch))
 
 		for idx, row := range batch {
-			placeholderStart := idx * 14
-			placeholders = append(placeholders, fmt.Sprintf(
-				"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
-				placeholderStart+1, placeholderStart+2, placeholderStart+3,
-				placeholderStart+4, placeholderStart+5, placeholderStart+6,
-				placeholderStart+7, placeholderStart+8, placeholderStart+9,
-				placeholderStart+10, placeholderStart+11, placeholderStart+12,
-				placeholderStart+13, placeholderStart+14))
-			values = append(values,
-				row.Article, row.Manufacturer, row.Model,
-				row.Width, row.Diameter, row.Drilling,
-				row.Radius, row.CentralHole, row.Color,
-				row.Price, row.Store, row.Balance, row.Provider, row.EmailDate)
+			articles[idx] = row.Article
+			manufacturers[idx] = row.Manufacturer
+			models[idx] = row.Model
+			widths[idx] = row.Width
+			diameters[idx] = row.Diameter
+			drillings[idx] = row.Drilling
+			radiuses[idx] = row.Radius
+			centralHoles[idx] = row.CentralHole
+			colors[idx] = row.Color
+			prices[idx] = row.Price
+			stores[idx] = row.Store
+			balances[idx] = row.Balance
+			providers[idx] = row.Provider
+			emailDates[idx] = row.EmailDate
 		}
 
-		query := fmt.Sprintf(`INSERT INTO price_disks
+		// Use INSERT ... SELECT with deduplication via NOT EXISTS
+		query := `
+			WITH new_data AS (
+				SELECT * FROM unnest(
+					$1::text[], $2::text[], $3::text[], $4::numeric[], $5::numeric[],
+					$6::text[], $7::text[], $8::text[], $9::text[], $10::numeric[],
+					$11::text[], $12::integer[], $13::text[], $14::timestamp[]
+				) AS t(article, manufacturer, model, width, diameter, drilling, radius,
+				       central_hole, color, price, store, balance, provider, email_date)
+			)
+			INSERT INTO price_disks
 			(article, manufacturer, model, width, diameter, drilling, radius,
 			 central_hole, color, price, store, balance, provider, email_date, isimport)
-			VALUES %s`, strings.Join(placeholders, ","))
+			SELECT article, manufacturer, model, width, diameter, drilling, radius,
+			       central_hole, color, price, store, balance, provider, email_date, 0
+			FROM new_data nd
+			WHERE NOT EXISTS (
+				SELECT 1 FROM price_disks pd
+				WHERE pd.article = nd.article
+				  AND pd.price = nd.price
+				  AND pd.balance = nd.balance
+				  AND pd.store = nd.store
+			)
+		`
 
-		_, err := tx.ExecContext(ctx, query, values...)
+		_, err := tx.ExecContext(ctx, query,
+			pq.Array(articles), pq.Array(manufacturers), pq.Array(models),
+			pq.Array(widths), pq.Array(diameters), pq.Array(drillings),
+			pq.Array(radiuses), pq.Array(centralHoles), pq.Array(colors),
+			pq.Array(prices), pq.Array(stores), pq.Array(balances),
+			pq.Array(providers), pq.Array(emailDates))
 		if err != nil {
 			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
 		}
