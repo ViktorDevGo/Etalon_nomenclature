@@ -33,7 +33,7 @@ func NewPriceParser(logger *zap.Logger) *PriceParser {
 }
 
 // Parse parses an Excel price list file and returns price tire rows
-func (p *PriceParser) Parse(content []byte, filename string, provider string, emailDate time.Time) ([]db.PriceTireRow, error) {
+func (p *PriceParser) Parse(content []byte, filename string, provider string, emailDate time.Time) ([]db.TyrePriceStockRow, error) {
 	// Convert .xls to .xlsx if needed
 	if strings.HasSuffix(strings.ToLower(filename), ".xls") && !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
 		p.logger.Info("Converting .xls to .xlsx with LibreOffice",
@@ -57,7 +57,7 @@ func (p *PriceParser) Parse(content []byte, filename string, provider string, em
 	}
 	defer f.Close()
 
-	var allRows []db.PriceTireRow
+	var allRows []db.TyrePriceStockRow
 
 	// Get all sheet names
 	sheets := f.GetSheetList()
@@ -122,7 +122,7 @@ func (p *PriceParser) shouldProcessSheet(sheetName string) bool {
 }
 
 // parseSheet parses a single sheet from the Excel file
-func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider string, emailDate time.Time) ([]db.PriceTireRow, error) {
+func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider string, emailDate time.Time) ([]db.TyrePriceStockRow, error) {
 	// Get streaming reader for memory efficiency
 	rows, err := f.Rows(sheetName)
 	if err != nil {
@@ -131,7 +131,7 @@ func (p *PriceParser) parseSheet(f *excelize.File, sheetName string, provider st
 	defer rows.Close()
 
 	var mapping *priceColumnMapping
-	var result []db.PriceTireRow
+	var result []db.TyrePriceStockRow
 	rowNum := 0
 	headerRowsScanned := 0
 	const maxHeaderRows = 20 // Scan first 20 rows for headers (БИГМАШИН has headers at row 11)
@@ -335,7 +335,7 @@ func (p *PriceParser) findPriceColumns(cols []string, provider string) *priceCol
 
 // parseRow parses a single data row into price tire rows
 // Returns an array because БИГМАШИН can create multiple rows for different warehouses
-func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provider string, emailDate time.Time) ([]db.PriceTireRow, error) {
+func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provider string, emailDate time.Time) ([]db.TyrePriceStockRow, error) {
 	if len(cols) == 0 {
 		return nil, fmt.Errorf("empty row")
 	}
@@ -369,7 +369,7 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 		return nil, fmt.Errorf("invalid price: %.2f (must be > 0)", price)
 	}
 
-	var rows []db.PriceTireRow
+	var rows []db.TyrePriceStockRow
 
 	if provider == string(ProviderBigMachine) {
 		// БИГМАШИН: Create separate row for each warehouse with balance > 0
@@ -382,13 +382,13 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 
 			// Only create row if balance > 0
 			if balance > 0 {
-				rows = append(rows, db.PriceTireRow{
-					Article:   article,
-					Price:     price,
-					Balance:   balance,
-					Store:     storeName,
-					Provider:  provider,
-					EmailDate: emailDate,
+				rows = append(rows, db.TyrePriceStockRow{
+					CAE:           article,
+					Price:         price,
+					Stock:         balance,
+					WarehouseName: storeName,
+					Provider:      provider,
+					EmailDate:     emailDate,
 				})
 			}
 		}
@@ -420,13 +420,13 @@ func (p *PriceParser) parseRow(cols []string, mapping *priceColumnMapping, provi
 				}
 			}
 
-			rows = append(rows, db.PriceTireRow{
-				Article:   article,
-				Price:     price,
-				Balance:   balance,
-				Store:     store,
-				Provider:  provider,
-				EmailDate: emailDate,
+			rows = append(rows, db.TyrePriceStockRow{
+				CAE:           article,
+				Price:         price,
+				Stock:         balance,
+				WarehouseName: store,
+				Provider:      provider,
+				EmailDate:     emailDate,
 			})
 		}
 	}

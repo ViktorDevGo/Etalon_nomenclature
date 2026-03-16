@@ -202,7 +202,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	diskParser := parser.NewDiskParser(p.logger)
 
 	var allRows []db.NomenclatureRow
-	var allPriceRows []db.PriceTireRow
+	var allTyreRows []db.TyrePriceStockRow
 	var allDiskRows []db.PriceDiskRow
 
 	// Process each attachment
@@ -246,7 +246,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 					zap.String("filename", attachment.Filename),
 					zap.String("provider", string(provider)),
 					zap.Int("rows", len(priceRows)))
-				allPriceRows = append(allPriceRows, priceRows...)
+				allTyreRows = append(allTyreRows, priceRows...)
 			}
 
 			// For ЗАПАСКА and БРИНЕКС, also try to parse disks from the same file
@@ -302,7 +302,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		}
 	}
 
-	if len(allRows) == 0 && len(allPriceRows) == 0 && len(allDiskRows) == 0 {
+	if len(allRows) == 0 && len(allTyreRows) == 0 && len(allDiskRows) == 0 {
 		p.logger.Error("No data extracted from attachments - NOT marking as processed",
 			zap.String("message_id", email.MessageID),
 			zap.String("subject", email.Subject),
@@ -327,16 +327,16 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		}
 	}
 
-	if len(allPriceRows) > 0 {
+	if len(allTyreRows) > 0 {
 		sampleSize := 3
-		if len(allPriceRows) < sampleSize {
-			sampleSize = len(allPriceRows)
+		if len(allTyreRows) < sampleSize {
+			sampleSize = len(allTyreRows)
 		}
 		for i := 0; i < sampleSize; i++ {
-			row := allPriceRows[i]
-			p.logger.Debug("Sample price row",
+			row := allTyreRows[i]
+			p.logger.Debug("Sample tyre row",
 				zap.Int("row_index", i),
-				zap.String("article", row.Article),
+				zap.String("cae", row.CAE),
 				zap.String("provider", row.Provider))
 		}
 	}
@@ -361,10 +361,10 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	p.logger.Info("Saving all email data in atomic transaction",
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
-		zap.Int("price_rows", len(allPriceRows)),
+		zap.Int("tyre_rows", len(allTyreRows)),
 		zap.Int("disk_rows", len(allDiskRows)))
 
-	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allPriceRows, allDiskRows, email.MessageID, email.Date); err != nil {
+	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allTyreRows, allDiskRows, email.MessageID, email.Date); err != nil {
 		p.logger.Error("Failed to save email data (transaction rolled back)",
 			zap.String("message_id", email.MessageID),
 			zap.Error(err))
@@ -374,7 +374,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	p.logger.Info("✅ Successfully processed email and saved ALL data atomically",
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
-		zap.Int("price_rows", len(allPriceRows)),
+		zap.Int("tyre_rows", len(allTyreRows)),
 		zap.Int("disk_rows", len(allDiskRows)))
 
 	return nil

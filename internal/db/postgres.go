@@ -56,27 +56,28 @@ ON processed_emails(message_id);
 CREATE INDEX IF NOT EXISTS idx_processed_emails_email_date
 ON processed_emails(email_date);
 
--- Table: price_tires
--- Stores tire prices from suppliers
-CREATE TABLE IF NOT EXISTS price_tires (
+-- Table: tyres_prices_stock
+-- Stores tire prices and stock from suppliers
+CREATE TABLE IF NOT EXISTS tyres_prices_stock (
     id SERIAL PRIMARY KEY,
-    article TEXT NOT NULL,
+    cae TEXT NOT NULL,
     price NUMERIC,
-    balance INTEGER,
-    store TEXT,
+    stock INTEGER,
+    warehouse_name TEXT,
     provider TEXT,
     isimport INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT now()
+    created_at TIMESTAMP DEFAULT now(),
+    email_date TIMESTAMP
 );
 
 -- Indices for fast lookups
-CREATE INDEX IF NOT EXISTS idx_price_tires_article ON price_tires(article);
-CREATE INDEX IF NOT EXISTS idx_price_tires_provider ON price_tires(provider);
-CREATE INDEX IF NOT EXISTS idx_price_tires_created_at ON price_tires(created_at);
+CREATE INDEX IF NOT EXISTS idx_tyres_prices_stock_cae ON tyres_prices_stock(cae);
+CREATE INDEX IF NOT EXISTS idx_tyres_prices_stock_provider ON tyres_prices_stock(provider);
+CREATE INDEX IF NOT EXISTS idx_tyres_prices_stock_created_at ON tyres_prices_stock(created_at);
 
--- Composite index for deduplication: check if exact record already exists
--- This dramatically speeds up duplicate detection during batch inserts
-CREATE INDEX IF NOT EXISTS idx_price_tires_dedup ON price_tires(article, price, balance, store);
+-- UNIQUE constraint for UPSERT logic: (cae, warehouse_name, provider)
+-- Ensures one record per article+warehouse+provider combination
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tyres_prices_stock_unique ON tyres_prices_stock(cae, warehouse_name, provider);
 
 -- Table: price_disks
 -- Stores disk/wheel prices from suppliers
@@ -127,14 +128,14 @@ type NomenclatureRow struct {
 	EmailDate    time.Time
 }
 
-// PriceTireRow represents a row in price_tires table
-type PriceTireRow struct {
-	Article   string
-	Price     float64
-	Balance   int
-	Store     string
-	Provider  string
-	EmailDate time.Time
+// TyrePriceStockRow represents a row in tyres_prices_stock table
+type TyrePriceStockRow struct {
+	CAE           string
+	Price         float64
+	Stock         int
+	WarehouseName string
+	Provider      string
+	EmailDate     time.Time
 }
 
 // PriceDiskRow represents a row in price_disks table
@@ -236,7 +237,7 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 	query := `
 		SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public'
-		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'price_tires', 'price_disks')
+		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'tyres_prices_stock', 'price_disks')
 	`
 
 	var count int
@@ -269,31 +270,25 @@ func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
 		return err
 	}
 
-	// Migration 2: Add email_date column to price_tires
-	if err := d.addColumnIfNotExists(ctx, "price_tires", "email_date", "TIMESTAMP"); err != nil {
-		return err
-	}
-
-	// Migration 3: Add price column to price_disks (if missing)
+	// Migration 2: Add price column to price_disks (if missing)
 	if err := d.addColumnIfNotExists(ctx, "price_disks", "price", "NUMERIC"); err != nil {
 		return err
 	}
 
-	// Migration 4: Add deduplication composite index for price_tires
-	if err := d.addIndexIfNotExists(ctx, "idx_price_tires_dedup",
-		"CREATE INDEX IF NOT EXISTS idx_price_tires_dedup ON price_tires(article, price, balance, store)"); err != nil {
-		return err
-	}
-
-	// Migration 5: Add deduplication composite index for price_disks
+	// Migration 3: Add deduplication composite index for price_disks
 	if err := d.addIndexIfNotExists(ctx, "idx_price_disks_dedup",
 		"CREATE INDEX IF NOT EXISTS idx_price_disks_dedup ON price_disks(article, price, balance, store)"); err != nil {
 		return err
 	}
 
-	// Migration 6: Add deduplication composite index for etalon_nomenclature
+	// Migration 4: Add deduplication composite index for etalon_nomenclature
 	if err := d.addIndexIfNotExists(ctx, "idx_etalon_nomenclature_dedup",
 		"CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc)"); err != nil {
+		return err
+	}
+
+	// Migration 5: Drop old price_tires table if it exists
+	if err := d.dropTableIfExists(ctx, "price_tires"); err != nil {
 		return err
 	}
 
@@ -362,6 +357,36 @@ func (d *Database) addIndexIfNotExists(ctx context.Context, indexName, createSQL
 	}
 
 	d.logger.Info("Created index", zap.String("index", indexName))
+	return nil
+}
+
+// dropTableIfExists drops a table if it exists
+func (d *Database) dropTableIfExists(ctx context.Context, tableName string) error {
+	// Check if table exists
+	checkQuery := `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = $1
+		)
+	`
+
+	var exists bool
+	if err := d.db.QueryRowContext(ctx, checkQuery, tableName).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check table %s: %w", tableName, err)
+	}
+
+	if !exists {
+		d.logger.Debug("Table does not exist, skipping drop", zap.String("table", tableName))
+		return nil
+	}
+
+	// Drop table
+	dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", tableName)
+	if _, err := d.db.ExecContext(ctx, dropSQL); err != nil {
+		return fmt.Errorf("failed to drop table %s: %w", tableName, err)
+	}
+
+	d.logger.Info("Dropped table", zap.String("table", tableName))
 	return nil
 }
 
@@ -594,9 +619,13 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 	return nil
 }
 
-// InsertPriceTiresWithEmail inserts price tire data and marks email as processed in a transaction
-func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTireRow, messageID string) error {
-	d.logger.Info("Starting InsertPriceTiresWithEmail",
+// InsertTyrePriceStockWithEmail inserts/updates tyre price stock data and marks email as processed in a transaction
+// Logic:
+// - If exact match (cae, price, stock, warehouse_name, provider) exists -> SKIP
+// - If record exists with same (cae, warehouse_name, provider) but different price/stock -> UPDATE with isimport=0
+// - If no record exists -> INSERT with isimport=0
+func (d *Database) InsertTyrePriceStockWithEmail(ctx context.Context, rows []TyrePriceStockRow, messageID string) error {
+	d.logger.Info("Starting InsertTyrePriceStockWithEmail",
 		zap.Int("total_rows", len(rows)),
 		zap.String("message_id", messageID))
 
@@ -609,14 +638,17 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 
 	d.logger.Info("Transaction started successfully")
 
-	// Insert price tire data in batches
+	// Insert/update tyre price stock data in batches
 	if len(rows) > 0 {
 		batchSize := 1000
 		totalBatches := (len(rows) + batchSize - 1) / batchSize
-		d.logger.Info("Preparing to insert price data in batches",
+		d.logger.Info("Preparing to upsert tyre price stock data in batches",
 			zap.Int("total_rows", len(rows)),
 			zap.Int("batch_size", batchSize),
 			zap.Int("total_batches", totalBatches))
+
+		totalInserted := int64(0)
+		totalSkipped := int64(0)
 
 		for i := 0; i < len(rows); i += batchSize {
 			end := i + batchSize
@@ -632,69 +664,84 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 				zap.Int("batch_start", i),
 				zap.Int("batch_size", len(batch)))
 
-			// Build array parameters for deduplication
-			articles := make([]string, len(batch))
+			// Build array parameters
+			caes := make([]string, len(batch))
 			prices := make([]float64, len(batch))
-			balances := make([]int, len(batch))
-			stores := make([]string, len(batch))
+			stocks := make([]int, len(batch))
+			warehouseNames := make([]string, len(batch))
 			providers := make([]string, len(batch))
 			emailDates := make([]time.Time, len(batch))
 
 			for idx, row := range batch {
-				articles[idx] = row.Article
+				caes[idx] = row.CAE
 				prices[idx] = row.Price
-				balances[idx] = row.Balance
-				stores[idx] = row.Store
+				stocks[idx] = row.Stock
+				warehouseNames[idx] = row.WarehouseName
 				providers[idx] = row.Provider
 				emailDates[idx] = row.EmailDate
 			}
 
-			// Use INSERT ... SELECT with deduplication via NOT EXISTS
+			// UPSERT with conditional UPDATE:
+			// - Insert new records with isimport=0
+			// - Update existing records ONLY if price or stock changed, set isimport=0
+			// - Skip if no changes (price and stock are the same)
 			query := `
 				WITH new_data AS (
 					SELECT * FROM unnest(
 						$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
-					) AS t(article, price, balance, store, provider, email_date)
+					) AS t(cae, price, stock, warehouse_name, provider, email_date)
 				)
-				INSERT INTO price_tires (article, price, balance, store, provider, email_date, isimport)
-				SELECT article, price, balance, store, provider, email_date, 0
+				INSERT INTO tyres_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, created_at)
+				SELECT cae, price, stock, warehouse_name, provider, email_date, 0, now()
 				FROM new_data nd
-				WHERE NOT EXISTS (
-					SELECT 1 FROM price_tires pt
-					WHERE pt.article = nd.article
-					  AND pt.price = nd.price
-					  AND pt.balance = nd.balance
-					  AND pt.store = nd.store
-				)
+				ON CONFLICT (cae, warehouse_name, provider)
+				DO UPDATE SET
+					price = EXCLUDED.price,
+					stock = EXCLUDED.stock,
+					email_date = EXCLUDED.email_date,
+					isimport = 0,
+					created_at = now()
+				WHERE tyres_prices_stock.price != EXCLUDED.price
+				   OR tyres_prices_stock.stock != EXCLUDED.stock
 			`
 
-			d.logger.Debug("Executing INSERT with deduplication",
+			d.logger.Debug("Executing UPSERT with conditional update",
 				zap.Int("batch_num", batchNum),
 				zap.Int("batch_size", len(batch)))
 
 			result, err := tx.ExecContext(ctx, query,
-				pq.Array(articles), pq.Array(prices), pq.Array(balances),
-				pq.Array(stores), pq.Array(providers), pq.Array(emailDates))
+				pq.Array(caes), pq.Array(prices), pq.Array(stocks),
+				pq.Array(warehouseNames), pq.Array(providers), pq.Array(emailDates))
 			if err != nil {
-				d.logger.Error("Failed to insert batch",
+				d.logger.Error("Failed to upsert batch",
 					zap.Int("batch_num", batchNum),
 					zap.Int("batch_start", i),
 					zap.Int("batch_size", len(batch)),
 					zap.Error(err))
-				return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+				return fmt.Errorf("failed to upsert batch %d: %w", batchNum, err)
 			}
 
 			rowsAffected, _ := result.RowsAffected()
+			// rowsAffected includes both INSERTs and UPDATEs
+			// Rows with no changes are skipped (not counted)
 			skipped := int64(len(batch)) - rowsAffected
-			d.logger.Info("Batch processed with deduplication",
+
+			totalInserted += rowsAffected // This is insert + update count
+			totalSkipped += skipped
+
+			d.logger.Info("Batch processed with UPSERT",
 				zap.Int("batch_num", batchNum),
 				zap.Int("batch_size", len(batch)),
-				zap.Int64("inserted", rowsAffected),
-				zap.Int64("skipped_duplicates", skipped))
+				zap.Int64("inserted_or_updated", rowsAffected),
+				zap.Int64("skipped_no_changes", skipped))
 		}
+
+		d.logger.Info("All batches processed",
+			zap.Int64("total_inserted_or_updated", totalInserted),
+			zap.Int64("total_skipped", totalSkipped))
 	}
 
-	d.logger.Info("All batches inserted, marking email as processed",
+	d.logger.Info("All batches processed, marking email as processed",
 		zap.String("message_id", messageID))
 
 	// Mark email as processed with email date from first row
@@ -731,7 +778,7 @@ func (d *Database) InsertPriceTiresWithEmail(ctx context.Context, rows []PriceTi
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	d.logger.Info("Transaction committed successfully - price data saved to database",
+	d.logger.Info("Transaction committed successfully - tyre price stock data saved to database",
 		zap.Int("total_rows", len(rows)),
 		zap.String("message_id", messageID))
 
@@ -976,8 +1023,8 @@ func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows 
 	return nil
 }
 
-// insertTiresInTx inserts tire price data within an existing transaction
-func (d *Database) insertTiresInTx(ctx context.Context, tx *sql.Tx, rows []PriceTireRow) error {
+// insertTyrePriceStockInTx inserts/updates tyre price stock data within an existing transaction
+func (d *Database) insertTyrePriceStockInTx(ctx context.Context, tx *sql.Tx, rows []TyrePriceStockRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -991,47 +1038,49 @@ func (d *Database) insertTiresInTx(ctx context.Context, tx *sql.Tx, rows []Price
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		// Build array parameters for deduplication
-		articles := make([]string, len(batch))
+		// Build array parameters
+		caes := make([]string, len(batch))
 		prices := make([]float64, len(batch))
-		balances := make([]int, len(batch))
-		stores := make([]string, len(batch))
+		stocks := make([]int, len(batch))
+		warehouseNames := make([]string, len(batch))
 		providers := make([]string, len(batch))
 		emailDates := make([]time.Time, len(batch))
 
 		for idx, row := range batch {
-			articles[idx] = row.Article
+			caes[idx] = row.CAE
 			prices[idx] = row.Price
-			balances[idx] = row.Balance
-			stores[idx] = row.Store
+			stocks[idx] = row.Stock
+			warehouseNames[idx] = row.WarehouseName
 			providers[idx] = row.Provider
 			emailDates[idx] = row.EmailDate
 		}
 
-		// Use INSERT ... SELECT with deduplication via NOT EXISTS
+		// UPSERT with conditional UPDATE (same logic as InsertTyrePriceStockWithEmail)
 		query := `
 			WITH new_data AS (
 				SELECT * FROM unnest(
 					$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
-				) AS t(article, price, balance, store, provider, email_date)
+				) AS t(cae, price, stock, warehouse_name, provider, email_date)
 			)
-			INSERT INTO price_tires (article, price, balance, store, provider, email_date, isimport)
-			SELECT article, price, balance, store, provider, email_date, 0
+			INSERT INTO tyres_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, created_at)
+			SELECT cae, price, stock, warehouse_name, provider, email_date, 0, now()
 			FROM new_data nd
-			WHERE NOT EXISTS (
-				SELECT 1 FROM price_tires pt
-				WHERE pt.article = nd.article
-				  AND pt.price = nd.price
-				  AND pt.balance = nd.balance
-				  AND pt.store = nd.store
-			)
+			ON CONFLICT (cae, warehouse_name, provider)
+			DO UPDATE SET
+				price = EXCLUDED.price,
+				stock = EXCLUDED.stock,
+				email_date = EXCLUDED.email_date,
+				isimport = 0,
+				created_at = now()
+			WHERE tyres_prices_stock.price != EXCLUDED.price
+			   OR tyres_prices_stock.stock != EXCLUDED.stock
 		`
 
 		_, err := tx.ExecContext(ctx, query,
-			pq.Array(articles), pq.Array(prices), pq.Array(balances),
-			pq.Array(stores), pq.Array(providers), pq.Array(emailDates))
+			pq.Array(caes), pq.Array(prices), pq.Array(stocks),
+			pq.Array(warehouseNames), pq.Array(providers), pq.Array(emailDates))
 		if err != nil {
-			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
+			return fmt.Errorf("failed to upsert batch %d: %w", batchNum, err)
 		}
 	}
 
@@ -1125,12 +1174,12 @@ func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []Price
 	return nil
 }
 
-// InsertAllEmailDataWithTransaction inserts all email data (nomenclature, tires, disks)
+// InsertAllEmailDataWithTransaction inserts all email data (nomenclature, tyres, disks)
 // in a SINGLE atomic transaction. Email is marked as processed ONLY if ALL data saves successfully.
 func (d *Database) InsertAllEmailDataWithTransaction(
 	ctx context.Context,
 	nomenclatureRows []NomenclatureRow,
-	tireRows []PriceTireRow,
+	tyreRows []TyrePriceStockRow,
 	diskRows []PriceDiskRow,
 	messageID string,
 	emailDate time.Time,
@@ -1138,7 +1187,7 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 	d.logger.Info("Starting atomic email data transaction",
 		zap.String("message_id", messageID),
 		zap.Int("nomenclature_rows", len(nomenclatureRows)),
-		zap.Int("tire_rows", len(tireRows)),
+		zap.Int("tyre_rows", len(tyreRows)),
 		zap.Int("disk_rows", len(diskRows)))
 
 	// Begin single transaction for ALL data
@@ -1166,19 +1215,19 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 			zap.Int("rows", len(nomenclatureRows)))
 	}
 
-	// 2. Insert tire price data if present
-	if len(tireRows) > 0 {
-		d.logger.Info("Inserting tire price data",
-			zap.Int("rows", len(tireRows)))
+	// 2. Insert/update tyre price stock data if present
+	if len(tyreRows) > 0 {
+		d.logger.Info("Inserting/updating tyre price stock data",
+			zap.Int("rows", len(tyreRows)))
 
-		if err := d.insertTiresInTx(ctx, tx, tireRows); err != nil {
-			d.logger.Error("Failed to insert tire data",
+		if err := d.insertTyrePriceStockInTx(ctx, tx, tyreRows); err != nil {
+			d.logger.Error("Failed to insert/update tyre data",
 				zap.Error(err))
-			return fmt.Errorf("failed to insert tires: %w", err)
+			return fmt.Errorf("failed to insert/update tyres: %w", err)
 		}
 
-		d.logger.Info("Tire price data inserted successfully",
-			zap.Int("rows", len(tireRows)))
+		d.logger.Info("Tyre price stock data inserted/updated successfully",
+			zap.Int("rows", len(tyreRows)))
 	}
 
 	// 3. Insert disk price data if present
@@ -1220,7 +1269,7 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 	d.logger.Info("Committing atomic transaction",
 		zap.String("message_id", messageID),
 		zap.Int("total_nomenclature", len(nomenclatureRows)),
-		zap.Int("total_tires", len(tireRows)),
+		zap.Int("total_tyres", len(tyreRows)),
 		zap.Int("total_disks", len(diskRows)))
 
 	if err := tx.Commit(); err != nil {
@@ -1233,7 +1282,7 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 	d.logger.Info("✅ Atomic transaction committed successfully - ALL data saved",
 		zap.String("message_id", messageID),
 		zap.Int("nomenclature_rows", len(nomenclatureRows)),
-		zap.Int("tire_rows", len(tireRows)),
+		zap.Int("tyre_rows", len(tyreRows)),
 		zap.Int("disk_rows", len(diskRows)))
 
 	return nil
