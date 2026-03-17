@@ -1,9 +1,9 @@
 -- Migration: Initial schema
--- Description: Create tables for MRC_Etalon and processed_emails
+-- Description: Create tables for mrc_etalon and processed_emails
 
--- Table: MRC_Etalon
+-- Table: mrc_etalon
 -- Stores nomenclature data extracted from Excel files
-CREATE TABLE IF NOT EXISTS MRC_Etalon (
+CREATE TABLE IF NOT EXISTS mrc_etalon (
     id SERIAL PRIMARY KEY,
     article TEXT,
     brand TEXT,
@@ -17,11 +17,11 @@ CREATE TABLE IF NOT EXISTS MRC_Etalon (
 );
 
 -- Add indices for common queries
-CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_article ON MRC_Etalon(article);
-CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_brand ON MRC_Etalon(brand);
-CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport ON MRC_Etalon(isimport);
-CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport_1С ON MRC_Etalon(isimport_1С);
-CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_created_at ON MRC_Etalon(created_at);
+CREATE INDEX IF NOT EXISTS idx_mrc_etalon_article ON mrc_etalon(article);
+CREATE INDEX IF NOT EXISTS idx_mrc_etalon_brand ON mrc_etalon(brand);
+CREATE INDEX IF NOT EXISTS idx_mrc_etalon_isimport ON mrc_etalon(isimport);
+CREATE INDEX IF NOT EXISTS idx_mrc_etalon_isimport_1С ON mrc_etalon(isimport_1С);
+CREATE INDEX IF NOT EXISTS idx_mrc_etalon_created_at ON mrc_etalon(created_at);
 
 -- Table: processed_emails
 -- Tracks processed emails to prevent duplicate processing
@@ -36,6 +36,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_emails_message_id
 ON processed_emails(message_id);
 
 -- Add comment for documentation
-COMMENT ON TABLE MRC_Etalon IS 'Stores nomenclature data from Excel attachments';
+COMMENT ON TABLE mrc_etalon IS 'Stores nomenclature data from Excel attachments';
 COMMENT ON TABLE processed_emails IS 'Tracks processed email Message-IDs to prevent reprocessing';
-COMMENT ON COLUMN MRC_Etalon.isimport IS '0 = data not imported by system, 1 = imported';
+COMMENT ON COLUMN mrc_etalon.isimport IS '0 = data not imported by system, 1 = imported';

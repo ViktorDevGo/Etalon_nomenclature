@@ -113,7 +113,8 @@
       "Bash(/tmp/test_central_vs_color.go:*)",
       "Bash(__NEW_LINE_c20ed067a785d7a6__ go run /tmp/test_central_vs_color.go)",
       "Bash(/tmp/cleanup_analysis.txt:*)",
-      "Bash(./cleanup_project.sh:*)"
+      "Bash(./cleanup_project.sh:*)",
+      "Bash(PGPASSWORD='Poison-79' psql:*)"
     ]
   }
 }
