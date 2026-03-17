@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS MRC_Etalon (
     nomenclature TEXT,
     mrc NUMERIC,
     isimport INTEGER DEFAULT 0,
+    isimport_1С INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT now()
 );
 
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS MRC_Etalon (
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_article ON MRC_Etalon(article);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_brand ON MRC_Etalon(brand);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport ON MRC_Etalon(isimport);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport_1С ON MRC_Etalon(isimport_1С);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_created_at ON MRC_Etalon(created_at);
 
 -- Composite index for deduplication by (article, mrc)
@@ -311,6 +313,17 @@ func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
 
 	// Migration 4: Drop old price_disks table if it exists
 	if err := d.dropTableIfExists(ctx, "price_disks"); err != nil {
+		return err
+	}
+
+	// Migration 5: Add isimport_1С column to MRC_Etalon
+	if err := d.addColumnIfNotExists(ctx, "MRC_Etalon", "isimport_1С", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// Migration 6: Add index on isimport_1С column
+	if err := d.addIndexIfNotExists(ctx, "idx_MRC_Etalon_isimport_1С",
+		"CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport_1С ON MRC_Etalon(isimport_1С)"); err != nil {
 		return err
 	}
 

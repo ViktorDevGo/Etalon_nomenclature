@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS MRC_Etalon (
     nomenclature TEXT,
     mrc NUMERIC,
     isimport INTEGER DEFAULT 0,
+    isimport_1С INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT now()
 );
 
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS MRC_Etalon (
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_article ON MRC_Etalon(article);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_brand ON MRC_Etalon(brand);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport ON MRC_Etalon(isimport);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport_1С ON MRC_Etalon(isimport_1С);
 CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_created_at ON MRC_Etalon(created_at);
 
 -- Table: processed_emails
