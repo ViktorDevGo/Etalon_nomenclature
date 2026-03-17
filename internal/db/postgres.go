@@ -15,9 +15,9 @@ import (
 
 // migrationSQL contains the initial database schema
 const migrationSQL = `
--- Table: etalon_nomenclature
+-- Table: MRC_Etalon
 -- Stores nomenclature data extracted from Excel files
-CREATE TABLE IF NOT EXISTS etalon_nomenclature (
+CREATE TABLE IF NOT EXISTS MRC_Etalon (
     id SERIAL PRIMARY KEY,
     article TEXT,
     brand TEXT,
@@ -30,14 +30,14 @@ CREATE TABLE IF NOT EXISTS etalon_nomenclature (
 );
 
 -- Add indices for common queries
-CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_article ON etalon_nomenclature(article);
-CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_brand ON etalon_nomenclature(brand);
-CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_isimport ON etalon_nomenclature(isimport);
-CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_created_at ON etalon_nomenclature(created_at);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_article ON MRC_Etalon(article);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_brand ON MRC_Etalon(brand);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_isimport ON MRC_Etalon(isimport);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_created_at ON MRC_Etalon(created_at);
 
 -- Composite index for deduplication by (article, mrc)
 -- This dramatically speeds up duplicate detection during batch inserts
-CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc);
+CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_dedup ON MRC_Etalon(article, mrc);
 
 -- Table: processed_emails
 -- Tracks processed emails to prevent duplicate processing
@@ -137,7 +137,7 @@ type Database struct {
 	logger *zap.Logger
 }
 
-// NomenclatureRow represents a row in etalon_nomenclature table
+// NomenclatureRow represents a row in MRC_Etalon table
 type NomenclatureRow struct {
 	Article      string
 	Brand        string
@@ -265,7 +265,7 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 	query := `
 		SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public'
-		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'tyres_prices_stock', 'rims_prices_stock', 'nomenclature_rims')
+		AND table_name IN ('MRC_Etalon', 'processed_emails', 'tyres_prices_stock', 'rims_prices_stock', 'nomenclature_rims')
 	`
 
 	var count int
@@ -293,14 +293,14 @@ func (d *Database) applyMigrations(ctx context.Context) error {
 
 // applyIncrementalMigrations applies incremental schema updates
 func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
-	// Migration 1: Add email_date column to etalon_nomenclature
-	if err := d.addColumnIfNotExists(ctx, "etalon_nomenclature", "email_date", "TIMESTAMP"); err != nil {
+	// Migration 1: Add email_date column to MRC_Etalon
+	if err := d.addColumnIfNotExists(ctx, "MRC_Etalon", "email_date", "TIMESTAMP"); err != nil {
 		return err
 	}
 
-	// Migration 2: Add deduplication composite index for etalon_nomenclature
-	if err := d.addIndexIfNotExists(ctx, "idx_etalon_nomenclature_dedup",
-		"CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc)"); err != nil {
+	// Migration 2: Add deduplication composite index for MRC_Etalon
+	if err := d.addIndexIfNotExists(ctx, "idx_MRC_Etalon_dedup",
+		"CREATE INDEX IF NOT EXISTS idx_MRC_Etalon_dedup ON MRC_Etalon(article, mrc)"); err != nil {
 		return err
 	}
 
@@ -450,7 +450,7 @@ func (d *Database) InsertNomenclature(ctx context.Context, rows []NomenclatureRo
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO etalon_nomenclature
+		INSERT INTO MRC_Etalon
 		(article, brand, type, size_model, nomenclature, mrc, isimport)
 		VALUES ($1, $2, $3, $4, $5, $6, 0)
 	`)
@@ -551,12 +551,12 @@ func (d *Database) InsertNomenclatureWithEmail(ctx context.Context, rows []Nomen
 						$5::text[], $6::numeric[], $7::timestamp[]
 					) AS t(article, brand, type, size_model, nomenclature, mrc, email_date)
 				)
-				INSERT INTO etalon_nomenclature
+				INSERT INTO MRC_Etalon
 				(article, brand, type, size_model, nomenclature, mrc, email_date, isimport)
 				SELECT article, brand, type, size_model, nomenclature, mrc, email_date, 0
 				FROM new_data nd
 				WHERE NOT EXISTS (
-					SELECT 1 FROM etalon_nomenclature en
+					SELECT 1 FROM MRC_Etalon en
 					WHERE TRIM(en.article) = TRIM(nd.article)
 					  AND en.mrc = nd.mrc
 				)
@@ -854,12 +854,12 @@ func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows 
 					$5::text[], $6::numeric[], $7::timestamp[]
 				) AS t(article, brand, type, size_model, nomenclature, mrc, email_date)
 			)
-			INSERT INTO etalon_nomenclature
+			INSERT INTO MRC_Etalon
 			(article, brand, type, size_model, nomenclature, mrc, email_date, isimport)
 			SELECT article, brand, type, size_model, nomenclature, mrc, email_date, 0
 			FROM new_data nd
 			WHERE NOT EXISTS (
-				SELECT 1 FROM etalon_nomenclature en
+				SELECT 1 FROM MRC_Etalon en
 				WHERE TRIM(en.article) = TRIM(nd.article)
 				  AND en.mrc = nd.mrc
 			)
