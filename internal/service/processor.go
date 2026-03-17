@@ -203,7 +203,8 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 
 	var allRows []db.NomenclatureRow
 	var allTyreRows []db.TyrePriceStockRow
-	var allDiskRows []db.PriceDiskRow
+	var allRimPriceRows []db.RimPriceStockRow
+	var allRimNomenclatureRows []db.NomenclatureRimRow
 
 	// Process each attachment
 	for _, attachment := range email.Attachments {
@@ -251,7 +252,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 
 			// For ЗАПАСКА and БРИНЕКС, also try to parse disks from the same file
 			if provider == parser.ProviderZapaska || provider == parser.ProviderBrinex {
-				diskRows, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+				diskResult, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
 				if err != nil {
 					// For БРИНЕКС, disk parsing failure is critical (file always contains "Автодиски" sheet)
 					// For ЗАПАСКА, it's optional (some files may not have disk section)
@@ -267,12 +268,14 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 							zap.String("provider", string(provider)),
 							zap.Error(err))
 					}
-				} else if len(diskRows) > 0 {
+				} else if len(diskResult.RimPriceRows) > 0 {
 					p.logger.Info("Parsed disk section from price attachment",
 						zap.String("filename", attachment.Filename),
 						zap.String("provider", string(provider)),
-						zap.Int("rows", len(diskRows)))
-					allDiskRows = append(allDiskRows, diskRows...)
+						zap.Int("rim_price_rows", len(diskResult.RimPriceRows)),
+						zap.Int("rim_nomenclature_rows", len(diskResult.RimNomenclatureRows)))
+					allRimPriceRows = append(allRimPriceRows, diskResult.RimPriceRows...)
+					allRimNomenclatureRows = append(allRimNomenclatureRows, diskResult.RimNomenclatureRows...)
 				} else if provider == parser.ProviderBrinex {
 					// БРИНЕКС file should always have disks
 					p.logger.Error("No disks found in БРИНЕКС file (should always have disks)",
@@ -284,7 +287,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		} else if fileType == parser.FileTypeDisk {
 			// Detect provider and parse disk file
 			provider := detector.DetectProvider(email.From)
-			diskRows, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+			diskResult, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
 			if err != nil {
 				p.logger.Error("Failed to parse disk attachment",
 					zap.String("filename", attachment.Filename),
@@ -296,13 +299,15 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			p.logger.Info("Parsed disk attachment",
 				zap.String("filename", attachment.Filename),
 				zap.String("provider", string(provider)),
-				zap.Int("rows", len(diskRows)))
+				zap.Int("rim_price_rows", len(diskResult.RimPriceRows)),
+				zap.Int("rim_nomenclature_rows", len(diskResult.RimNomenclatureRows)))
 
-			allDiskRows = append(allDiskRows, diskRows...)
+			allRimPriceRows = append(allRimPriceRows, diskResult.RimPriceRows...)
+			allRimNomenclatureRows = append(allRimNomenclatureRows, diskResult.RimNomenclatureRows...)
 		}
 	}
 
-	if len(allRows) == 0 && len(allTyreRows) == 0 && len(allDiskRows) == 0 {
+	if len(allRows) == 0 && len(allTyreRows) == 0 && len(allRimPriceRows) == 0 {
 		p.logger.Error("No data extracted from attachments - NOT marking as processed",
 			zap.String("message_id", email.MessageID),
 			zap.String("subject", email.Subject),
@@ -341,18 +346,33 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		}
 	}
 
-	if len(allDiskRows) > 0 {
+	if len(allRimPriceRows) > 0 {
 		sampleSize := 3
-		if len(allDiskRows) < sampleSize {
-			sampleSize = len(allDiskRows)
+		if len(allRimPriceRows) < sampleSize {
+			sampleSize = len(allRimPriceRows)
 		}
 		for i := 0; i < sampleSize; i++ {
-			row := allDiskRows[i]
-			p.logger.Debug("Sample disk row",
+			row := allRimPriceRows[i]
+			p.logger.Debug("Sample rim price row",
 				zap.Int("row_index", i),
-				zap.String("article", row.Article),
-				zap.String("manufacturer", row.Manufacturer),
-				zap.String("provider", row.Provider))
+				zap.String("cae", row.CAE),
+				zap.String("provider", row.Provider),
+				zap.String("warehouse", row.WarehouseName))
+		}
+	}
+
+	if len(allRimNomenclatureRows) > 0 {
+		sampleSize := 3
+		if len(allRimNomenclatureRows) < sampleSize {
+			sampleSize = len(allRimNomenclatureRows)
+		}
+		for i := 0; i < sampleSize; i++ {
+			row := allRimNomenclatureRows[i]
+			p.logger.Debug("Sample rim nomenclature row",
+				zap.Int("row_index", i),
+				zap.String("cae", row.CAE),
+				zap.String("brand", row.Brand),
+				zap.String("name", row.Name))
 		}
 	}
 
@@ -362,9 +382,10 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
 		zap.Int("tyre_rows", len(allTyreRows)),
-		zap.Int("disk_rows", len(allDiskRows)))
+		zap.Int("rim_price_rows", len(allRimPriceRows)),
+		zap.Int("rim_nomenclature_rows", len(allRimNomenclatureRows)))
 
-	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allTyreRows, allDiskRows, email.MessageID, email.Date); err != nil {
+	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allTyreRows, allRimPriceRows, allRimNomenclatureRows, email.MessageID, email.Date); err != nil {
 		p.logger.Error("Failed to save email data (transaction rolled back)",
 			zap.String("message_id", email.MessageID),
 			zap.Error(err))
@@ -375,7 +396,8 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 		zap.String("message_id", email.MessageID),
 		zap.Int("nomenclature_rows", len(allRows)),
 		zap.Int("tyre_rows", len(allTyreRows)),
-		zap.Int("disk_rows", len(allDiskRows)))
+		zap.Int("rim_price_rows", len(allRimPriceRows)),
+		zap.Int("rim_nomenclature_rows", len(allRimNomenclatureRows)))
 
 	return nil
 }

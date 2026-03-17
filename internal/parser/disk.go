@@ -45,8 +45,32 @@ func NewDiskParser(logger *zap.Logger) *DiskParser {
 	}
 }
 
-// Parse parses an Excel disk file and returns disk rows
-func (p *DiskParser) Parse(content []byte, filename string, provider string, emailDate time.Time) ([]db.PriceDiskRow, error) {
+// ParseResult contains parsed rim data separated into price stock and nomenclature
+type ParseResult struct {
+	RimPriceRows        []db.RimPriceStockRow
+	RimNomenclatureRows []db.NomenclatureRimRow
+}
+
+// PriceDiskRow represents intermediate disk data during parsing (before conversion to rim tables)
+type PriceDiskRow struct {
+	Article      string
+	Manufacturer string
+	Model        string
+	Width        float64
+	Diameter     float64
+	Drilling     string // Format: "5*114.3" or "4*100"
+	Radius       string // ET value (e.g., "ET35")
+	CentralHole  string // DIA value (e.g., "D66.1")
+	Color        string
+	Price        float64
+	Store        string
+	Balance      int
+	Provider     string
+	EmailDate    time.Time
+}
+
+// Parse parses an Excel disk file and returns rim price stock and nomenclature rows
+func (p *DiskParser) Parse(content []byte, filename string, provider string, emailDate time.Time) (*ParseResult, error) {
 	// Convert .xls to .xlsx if needed
 	if strings.HasSuffix(strings.ToLower(filename), ".xls") && !strings.HasSuffix(strings.ToLower(filename), ".xlsx") {
 		p.logger.Info("Converting .xls to .xlsx with LibreOffice",
@@ -70,7 +94,10 @@ func (p *DiskParser) Parse(content []byte, filename string, provider string, ema
 	}
 	defer f.Close()
 
-	var allRows []db.PriceDiskRow
+	result := &ParseResult{
+		RimPriceRows:        []db.RimPriceStockRow{},
+		RimNomenclatureRows: []db.NomenclatureRimRow{},
+	}
 
 	// Get all sheet names
 	sheets := f.GetSheetList()
@@ -88,7 +115,7 @@ func (p *DiskParser) Parse(content []byte, filename string, provider string, ema
 			continue
 		}
 
-		rows, err := p.parseSheet(f, sheetName, provider, emailDate)
+		sheetResult, err := p.parseSheet(f, sheetName, provider, emailDate)
 		if err != nil {
 			p.logger.Warn("Failed to parse sheet",
 				zap.String("sheet", sheetName),
@@ -96,22 +123,25 @@ func (p *DiskParser) Parse(content []byte, filename string, provider string, ema
 			continue
 		}
 
-		if len(rows) > 0 {
-			allRows = append(allRows, rows...)
+		if sheetResult != nil {
+			result.RimPriceRows = append(result.RimPriceRows, sheetResult.RimPriceRows...)
+			result.RimNomenclatureRows = append(result.RimNomenclatureRows, sheetResult.RimNomenclatureRows...)
+
 			p.logger.Info("Parsed disk sheet",
 				zap.String("sheet", sheetName),
-				zap.Int("rows", len(rows)))
+				zap.Int("rim_price_rows", len(sheetResult.RimPriceRows)),
+				zap.Int("rim_nomenclature_rows", len(sheetResult.RimNomenclatureRows)))
 		}
 	}
 
-	if len(allRows) == 0 {
+	if len(result.RimPriceRows) == 0 && len(result.RimNomenclatureRows) == 0 {
 		p.logger.Error("No valid disk data found in any sheet",
 			zap.String("filename", filename),
 			zap.Int("total_sheets", len(sheets)))
 		return nil, fmt.Errorf("no valid disk data found in any sheet")
 	}
 
-	return allRows, nil
+	return result, nil
 }
 
 // shouldProcessSheet checks if the sheet should be processed for disks
@@ -141,8 +171,8 @@ func (p *DiskParser) shouldProcessSheet(sheetName string, provider string) bool 
 	return false
 }
 
-// parseSheet parses a single sheet from the Excel file
-func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider string, emailDate time.Time) ([]db.PriceDiskRow, error) {
+// parseSheet parses a single sheet from the Excel file and returns ParseResult
+func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider string, emailDate time.Time) (*ParseResult, error) {
 	rows, err := f.Rows(sheetName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rows: %w", err)
@@ -150,7 +180,10 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 	defer rows.Close()
 
 	var mapping *diskColumnMapping
-	var result []db.PriceDiskRow
+	result := &ParseResult{
+		RimPriceRows:        []db.RimPriceStockRow{},
+		RimNomenclatureRows: []db.NomenclatureRimRow{},
+	}
 	rowNum := 0
 	inDiskSection := false // Track if we're in the disk section (for ЗАПАСКА)
 
@@ -186,7 +219,7 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 					p.logger.Info("Found tubes section marker - stopping disk parsing",
 						zap.String("sheet", sheetName),
 						zap.Int("row", rowNum),
-						zap.Int("total_disks_parsed", len(result)))
+						zap.Int("total_rim_prices_parsed", len(result.RimPriceRows)))
 					break
 				}
 				continue
@@ -220,7 +253,7 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 		}
 
 		// Parse data row
-		parsedRows, err := p.parseDiskRow(cols, mapping, provider, emailDate)
+		parsedResult, err := p.parseDiskRow(cols, mapping, provider, emailDate)
 		if err != nil {
 			p.logger.Debug("Skipping invalid disk row",
 				zap.String("sheet", sheetName),
@@ -229,8 +262,10 @@ func (p *DiskParser) parseSheet(f *excelize.File, sheetName string, provider str
 			continue
 		}
 
-		if len(parsedRows) > 0 {
-			result = append(result, parsedRows...)
+		// Merge parsed data into main result
+		if parsedResult != nil {
+			result.RimPriceRows = append(result.RimPriceRows, parsedResult.RimPriceRows...)
+			result.RimNomenclatureRows = append(result.RimNomenclatureRows, parsedResult.RimNomenclatureRows...)
 		}
 	}
 
@@ -393,8 +428,8 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 	return nil
 }
 
-// parseDiskRow parses a single row and returns disk data
-func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, provider string, emailDate time.Time) ([]db.PriceDiskRow, error) {
+// parseDiskRow parses a single row and returns rim price and nomenclature data
+func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, provider string, emailDate time.Time) (*ParseResult, error) {
 	if len(cols) == 0 {
 		return nil, fmt.Errorf("empty row")
 	}
@@ -407,7 +442,7 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 	// Check if we have structured columns
 	hasStructuredColumns := mapping.diameter >= 0 && mapping.width >= 0 && mapping.drilling >= 0
 
-	var diskData *db.PriceDiskRow
+	var diskData *PriceDiskRow
 	var err error
 
 	if hasStructuredColumns {
@@ -491,7 +526,10 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 		return nil, fmt.Errorf("invalid price: %.2f (must be > 0)", diskData.Price)
 	}
 
-	var result []db.PriceDiskRow
+	result := &ParseResult{
+		RimPriceRows:        []db.RimPriceStockRow{},
+		RimNomenclatureRows: []db.NomenclatureRimRow{},
+	}
 
 	// Priority 1: Single balance and store columns (for БРИНЕКС)
 	// Check this first because БРИНЕКС has both balance map AND storeColumn
@@ -500,9 +538,25 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 		balance, err := p.parseInt(balanceStr)
 		if err == nil && balance > 0 {
 			store := p.getColumn(cols, mapping.storeColumn)
-			diskData.Store = store
-			diskData.Balance = balance
-			result = append(result, *diskData)
+
+			// Add to rim price stock (all providers)
+			rimPrice := db.RimPriceStockRow{
+				CAE:           article,
+				Price:         diskData.Price,
+				Stock:         balance,
+				WarehouseName: store,
+				Provider:      provider,
+				EmailDate:     emailDate,
+			}
+			result.RimPriceRows = append(result.RimPriceRows, rimPrice)
+
+			// Add to nomenclature_rims (only ЗАПАСКА + specific manufacturers)
+			if shouldAddToNomenclature(provider, diskData.Manufacturer) {
+				nomenclature, err := p.createRimNomenclature(diskData, article, emailDate)
+				if err == nil {
+					result.RimNomenclatureRows = append(result.RimNomenclatureRows, *nomenclature)
+				}
+			}
 		}
 	} else if len(mapping.balance) > 0 {
 		// Priority 2: Handle balance columns (for БИГМАШИН - multiple stores)
@@ -513,24 +567,147 @@ func (p *DiskParser) parseDiskRow(cols []string, mapping *diskColumnMapping, pro
 				continue // Skip if balance is 0 or invalid
 			}
 
-			row := *diskData
-			row.Store = storeName
-			row.Balance = balance
-			result = append(result, row)
+			// Add to rim price stock (all providers)
+			rimPrice := db.RimPriceStockRow{
+				CAE:           article,
+				Price:         diskData.Price,
+				Stock:         balance,
+				WarehouseName: storeName,
+				Provider:      provider,
+				EmailDate:     emailDate,
+			}
+			result.RimPriceRows = append(result.RimPriceRows, rimPrice)
+
+			// Add to nomenclature_rims (only ЗАПАСКА + specific manufacturers)
+			// Only add once (not for each warehouse)
+			if len(result.RimNomenclatureRows) == 0 && shouldAddToNomenclature(provider, diskData.Manufacturer) {
+				nomenclature, err := p.createRimNomenclature(diskData, article, emailDate)
+				if err == nil {
+					result.RimNomenclatureRows = append(result.RimNomenclatureRows, *nomenclature)
+				}
+			}
 		}
 	} else {
 		// Priority 3: No store/balance info or fallback
-		diskData.Store = "Основной"
-		diskData.Balance = 1
-		result = append(result, *diskData)
+		rimPrice := db.RimPriceStockRow{
+			CAE:           article,
+			Price:         diskData.Price,
+			Stock:         1,
+			WarehouseName: "Основной",
+			Provider:      provider,
+			EmailDate:     emailDate,
+		}
+		result.RimPriceRows = append(result.RimPriceRows, rimPrice)
+
+		// Add to nomenclature_rims (only ЗАПАСКА + specific manufacturers)
+		if shouldAddToNomenclature(provider, diskData.Manufacturer) {
+			nomenclature, err := p.createRimNomenclature(diskData, article, emailDate)
+			if err == nil {
+				result.RimNomenclatureRows = append(result.RimNomenclatureRows, *nomenclature)
+			}
+		}
 	}
 
 	return result, nil
 }
 
+// shouldAddToNomenclature checks if rim data should be added to nomenclature_rims table
+// Only ЗАПАСКА provider with specific manufacturers: COX, FF, Koko, Sakura
+func shouldAddToNomenclature(provider, manufacturer string) bool {
+	if !strings.Contains(provider, "ЗАПАСКА") {
+		return false
+	}
+
+	// Normalize manufacturer name
+	mfg := strings.TrimSpace(strings.ToLower(manufacturer))
+
+	// Check if manufacturer is in the allowed list
+	allowedManufacturers := []string{"cox", "ff", "koko", "sakura"}
+	for _, allowed := range allowedManufacturers {
+		if strings.Contains(mfg, allowed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// createRimNomenclature creates a NomenclatureRimRow from disk data
+func (p *DiskParser) createRimNomenclature(diskData *PriceDiskRow, article string, emailDate time.Time) (*db.NomenclatureRimRow, error) {
+	// Parse drilling field to extract bolts_count and bolts_spacing
+	// Format: "5*114.3" or "4*100"
+	boltsCount := 0
+	boltsSpacing := 0.0
+
+	if diskData.Drilling != "" {
+		parts := strings.Split(diskData.Drilling, "*")
+		if len(parts) == 2 {
+			// Parse bolts count (first part)
+			if count, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil {
+				boltsCount = count
+			}
+
+			// Parse bolts spacing (second part)
+			if spacing, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
+				boltsSpacing = spacing
+			}
+		}
+	}
+
+	// Create nomenclature from disk data
+	// Format: "{Brand} {Model} {Width}x{Diameter} {Drilling} {ET} {DIA} {Color}"
+	var nomenclatureParts []string
+
+	if diskData.Manufacturer != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.Manufacturer)
+	}
+
+	if diskData.Model != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.Model)
+	}
+
+	if diskData.Width > 0 && diskData.Diameter > 0 {
+		size := fmt.Sprintf("%.1fx%.1f", diskData.Width, diskData.Diameter)
+		nomenclatureParts = append(nomenclatureParts, size)
+	}
+
+	if diskData.Drilling != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.Drilling)
+	}
+
+	if diskData.Radius != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.Radius)
+	}
+
+	if diskData.CentralHole != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.CentralHole)
+	}
+
+	if diskData.Color != "" {
+		nomenclatureParts = append(nomenclatureParts, diskData.Color)
+	}
+
+	nomenclature := strings.Join(nomenclatureParts, " ")
+
+	return &db.NomenclatureRimRow{
+		CAE:          article,
+		Name:         nomenclature,
+		Width:        diskData.Width,
+		Diameter:     diskData.Diameter,
+		BoltsCount:   boltsCount,
+		BoltsSpacing: boltsSpacing,
+		ET:           diskData.Radius,
+		DIA:          diskData.CentralHole,
+		Model:        diskData.Model,
+		Brand:        diskData.Manufacturer,
+		Color:        diskData.Color,
+		EmailDate:    emailDate,
+	}, nil
+}
+
 // parseDiskFromColumns parses disk data from structured columns
-func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapping) (*db.PriceDiskRow, error) {
-	disk := &db.PriceDiskRow{}
+func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapping) (*PriceDiskRow, error) {
+	disk := &PriceDiskRow{}
 
 	// Parse manufacturer
 	if mapping.manufacturer >= 0 {
@@ -657,7 +834,7 @@ func (p *DiskParser) parseDiskFromColumns(cols []string, mapping *diskColumnMapp
 }
 
 // parseDiskSpecifications extracts disk specifications from nomenclature string
-func (p *DiskParser) parseDiskSpecifications(nomenclature string, provider string) (*db.PriceDiskRow, error) {
+func (p *DiskParser) parseDiskSpecifications(nomenclature string, provider string) (*PriceDiskRow, error) {
 	nomenclature = strings.TrimSpace(nomenclature)
 
 	if strings.Contains(provider, "ЗАПАСКА") {
@@ -670,13 +847,13 @@ func (p *DiskParser) parseDiskSpecifications(nomenclature string, provider strin
 }
 
 // parseZapaskaDisk parses ЗАПАСКА format: "15 Alcasta M62 6.0*15 4*100 ET40 D60.1 BLACK"
-func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, error) {
+func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*PriceDiskRow, error) {
 	parts := strings.Fields(nomenclature)
 	if len(parts) < 5 {
 		return nil, fmt.Errorf("not enough parts in nomenclature")
 	}
 
-	disk := &db.PriceDiskRow{}
+	disk := &PriceDiskRow{}
 
 	// Skip first part if it's a number (like "15")
 	startIdx := 0
@@ -762,8 +939,8 @@ func (p *DiskParser) parseZapaskaDisk(nomenclature string) (*db.PriceDiskRow, er
 
 // parseBigMachineOrBrinexDisk parses БИГМАШИН/БРИНЕКС format:
 // "Диск литой 6.5х16 5х114.3 ЕТ40 dia 66.1 KHOMEN KHW1612 GRAY-FP"
-func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*db.PriceDiskRow, error) {
-	disk := &db.PriceDiskRow{}
+func (p *DiskParser) parseBigMachineOrBrinexDisk(nomenclature string) (*PriceDiskRow, error) {
+	disk := &PriceDiskRow{}
 
 	// Split into words
 	parts := strings.Fields(nomenclature)
@@ -888,7 +1065,7 @@ func (p *DiskParser) isDrilling(s string) bool {
 }
 
 // parseWidthDiameter parses width x diameter from string like "6.5х16" or "8,5*20"
-func (p *DiskParser) parseWidthDiameter(s string, disk *db.PriceDiskRow) error {
+func (p *DiskParser) parseWidthDiameter(s string, disk *PriceDiskRow) error {
 	// Replace different "x" variations
 	s = strings.ReplaceAll(s, "х", "x")
 	s = strings.ReplaceAll(s, "*", "x")
@@ -918,7 +1095,7 @@ func (p *DiskParser) parseWidthDiameter(s string, disk *db.PriceDiskRow) error {
 }
 
 // validateDiskData validates the parsed disk data
-func (p *DiskParser) validateDiskData(disk *db.PriceDiskRow) error {
+func (p *DiskParser) validateDiskData(disk *PriceDiskRow) error {
 	// Width should be reasonable (e.g., 4.0 to 15.0)
 	if disk.Width < 4.0 || disk.Width > 15.0 {
 		return fmt.Errorf("invalid width: %.1f (expected 4.0-15.0)", disk.Width)

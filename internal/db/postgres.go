@@ -79,36 +79,56 @@ CREATE INDEX IF NOT EXISTS idx_tyres_prices_stock_created_at ON tyres_prices_sto
 -- Ensures one record per article+warehouse+provider combination
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tyres_prices_stock_unique ON tyres_prices_stock(cae, warehouse_name, provider);
 
--- Table: price_disks
--- Stores disk/wheel prices from suppliers
-CREATE TABLE IF NOT EXISTS price_disks (
+-- Table: rims_prices_stock
+-- Stores rim/wheel prices and stock from suppliers
+CREATE TABLE IF NOT EXISTS rims_prices_stock (
     id SERIAL PRIMARY KEY,
-    article TEXT NOT NULL,
-    manufacturer TEXT,
-    model TEXT,
-    width NUMERIC,
-    diameter NUMERIC,
-    drilling TEXT,
-    radius TEXT,
-    central_hole TEXT,
-    color TEXT,
+    cae TEXT NOT NULL,
     price NUMERIC,
-    store TEXT,
-    balance INTEGER DEFAULT 0,
+    stock INTEGER,
+    warehouse_name TEXT,
     provider TEXT,
     isimport INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT now(),
     email_date TIMESTAMP
 );
 
--- Index for fast article lookups
-CREATE INDEX IF NOT EXISTS idx_price_disks_article ON price_disks(article);
-CREATE INDEX IF NOT EXISTS idx_price_disks_provider ON price_disks(provider);
-CREATE INDEX IF NOT EXISTS idx_price_disks_created_at ON price_disks(created_at);
+-- Indices for fast lookups
+CREATE INDEX IF NOT EXISTS idx_rims_prices_stock_cae ON rims_prices_stock(cae);
+CREATE INDEX IF NOT EXISTS idx_rims_prices_stock_provider ON rims_prices_stock(provider);
+CREATE INDEX IF NOT EXISTS idx_rims_prices_stock_created_at ON rims_prices_stock(created_at);
 
--- Composite index for deduplication: check if exact record already exists
--- This dramatically speeds up duplicate detection during batch inserts
-CREATE INDEX IF NOT EXISTS idx_price_disks_dedup ON price_disks(article, price, balance, store);
+-- UNIQUE constraint for UPSERT logic: (cae, warehouse_name, provider)
+-- Ensures one record per article+warehouse+provider combination
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rims_prices_stock_unique ON rims_prices_stock(cae, warehouse_name, provider);
+
+-- Table: nomenclature_rims
+-- Stores rim nomenclature data (only for ЗАПАСКА provider and specific manufacturers)
+CREATE TABLE IF NOT EXISTS nomenclature_rims (
+    id SERIAL PRIMARY KEY,
+    cae TEXT NOT NULL,
+    name TEXT,
+    width NUMERIC,
+    diameter NUMERIC,
+    bolts_count INTEGER,
+    bolts_spacing NUMERIC,
+    et TEXT,
+    dia TEXT,
+    model TEXT,
+    brand TEXT,
+    color TEXT,
+    isimport INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT now(),
+    email_date TIMESTAMP
+);
+
+-- Index for fast lookups
+CREATE INDEX IF NOT EXISTS idx_nomenclature_rims_cae ON nomenclature_rims(cae);
+CREATE INDEX IF NOT EXISTS idx_nomenclature_rims_brand ON nomenclature_rims(brand);
+CREATE INDEX IF NOT EXISTS idx_nomenclature_rims_created_at ON nomenclature_rims(created_at);
+
+-- UNIQUE constraint on cae to prevent duplicates
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nomenclature_rims_cae_unique ON nomenclature_rims(cae);
 `
 
 // Database represents the database connection
@@ -138,21 +158,29 @@ type TyrePriceStockRow struct {
 	EmailDate     time.Time
 }
 
-// PriceDiskRow represents a row in price_disks table
-type PriceDiskRow struct {
-	Article      string
-	Manufacturer string
-	Model        string
+// RimPriceStockRow represents a row in rims_prices_stock table
+type RimPriceStockRow struct {
+	CAE           string
+	Price         float64
+	Stock         int
+	WarehouseName string
+	Provider      string
+	EmailDate     time.Time
+}
+
+// NomenclatureRimRow represents a row in nomenclature_rims table
+type NomenclatureRimRow struct {
+	CAE          string
+	Name         string
 	Width        float64
 	Diameter     float64
-	Drilling     string
-	Radius       string
-	CentralHole  string
+	BoltsCount   int
+	BoltsSpacing float64
+	ET           string
+	DIA          string
+	Model        string
+	Brand        string
 	Color        string
-	Price        float64
-	Store        string
-	Balance      int
-	Provider     string
 	EmailDate    time.Time
 }
 
@@ -237,7 +265,7 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 	query := `
 		SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public'
-		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'tyres_prices_stock', 'price_disks')
+		AND table_name IN ('etalon_nomenclature', 'processed_emails', 'tyres_prices_stock', 'rims_prices_stock', 'nomenclature_rims')
 	`
 
 	var count int
@@ -245,8 +273,8 @@ func (d *Database) checkTablesExist(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to query tables: %w", err)
 	}
 
-	// All four tables should exist
-	return count == 4, nil
+	// All five tables should exist
+	return count == 5, nil
 }
 
 // applyMigrations applies the database schema migrations
@@ -270,25 +298,19 @@ func (d *Database) applyIncrementalMigrations(ctx context.Context) error {
 		return err
 	}
 
-	// Migration 2: Add price column to price_disks (if missing)
-	if err := d.addColumnIfNotExists(ctx, "price_disks", "price", "NUMERIC"); err != nil {
-		return err
-	}
-
-	// Migration 3: Add deduplication composite index for price_disks
-	if err := d.addIndexIfNotExists(ctx, "idx_price_disks_dedup",
-		"CREATE INDEX IF NOT EXISTS idx_price_disks_dedup ON price_disks(article, price, balance, store)"); err != nil {
-		return err
-	}
-
-	// Migration 4: Add deduplication composite index for etalon_nomenclature
+	// Migration 2: Add deduplication composite index for etalon_nomenclature
 	if err := d.addIndexIfNotExists(ctx, "idx_etalon_nomenclature_dedup",
 		"CREATE INDEX IF NOT EXISTS idx_etalon_nomenclature_dedup ON etalon_nomenclature(article, mrc)"); err != nil {
 		return err
 	}
 
-	// Migration 5: Drop old price_tires table if it exists
+	// Migration 3: Drop old price_tires table if it exists
 	if err := d.dropTableIfExists(ctx, "price_tires"); err != nil {
+		return err
+	}
+
+	// Migration 4: Drop old price_disks table if it exists
+	if err := d.dropTableIfExists(ctx, "price_disks"); err != nil {
 		return err
 	}
 
@@ -786,174 +808,6 @@ func (d *Database) InsertTyrePriceStockWithEmail(ctx context.Context, rows []Tyr
 }
 
 // InsertPriceDisksWithEmail inserts price disk data and marks email as processed in a transaction
-func (d *Database) InsertPriceDisksWithEmail(ctx context.Context, rows []PriceDiskRow, messageID string) error {
-	d.logger.Info("Starting InsertPriceDisksWithEmail",
-		zap.Int("total_rows", len(rows)),
-		zap.String("message_id", messageID))
-
-	tx, err := d.db.BeginTx(ctx, nil)
-	if err != nil {
-		d.logger.Error("Failed to begin transaction", zap.Error(err))
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	d.logger.Info("Transaction started successfully")
-
-	// Insert price disk data in batches
-	if len(rows) > 0 {
-		batchSize := 1000
-		totalBatches := (len(rows) + batchSize - 1) / batchSize
-		d.logger.Info("Preparing to insert disk price data in batches",
-			zap.Int("total_rows", len(rows)),
-			zap.Int("batch_size", batchSize),
-			zap.Int("total_batches", totalBatches))
-
-		for i := 0; i < len(rows); i += batchSize {
-			end := i + batchSize
-			if end > len(rows) {
-				end = len(rows)
-			}
-			batch := rows[i:end]
-			batchNum := (i / batchSize) + 1
-
-			d.logger.Info("Processing batch",
-				zap.Int("batch_num", batchNum),
-				zap.Int("total_batches", totalBatches),
-				zap.Int("batch_start", i),
-				zap.Int("batch_size", len(batch)))
-
-			// Build array parameters for deduplication
-			articles := make([]string, len(batch))
-			manufacturers := make([]string, len(batch))
-			models := make([]string, len(batch))
-			widths := make([]float64, len(batch))
-			diameters := make([]float64, len(batch))
-			drillings := make([]string, len(batch))
-			radiuses := make([]string, len(batch))
-			centralHoles := make([]string, len(batch))
-			colors := make([]string, len(batch))
-			prices := make([]float64, len(batch))
-			stores := make([]string, len(batch))
-			balances := make([]int, len(batch))
-			providers := make([]string, len(batch))
-			emailDates := make([]time.Time, len(batch))
-
-			for idx, row := range batch {
-				articles[idx] = row.Article
-				manufacturers[idx] = row.Manufacturer
-				models[idx] = row.Model
-				widths[idx] = row.Width
-				diameters[idx] = row.Diameter
-				drillings[idx] = row.Drilling
-				radiuses[idx] = row.Radius
-				centralHoles[idx] = row.CentralHole
-				colors[idx] = row.Color
-				prices[idx] = row.Price
-				stores[idx] = row.Store
-				balances[idx] = row.Balance
-				providers[idx] = row.Provider
-				emailDates[idx] = row.EmailDate
-			}
-
-			// Use INSERT ... SELECT with deduplication via NOT EXISTS
-			query := `
-				WITH new_data AS (
-					SELECT * FROM unnest(
-						$1::text[], $2::text[], $3::text[], $4::numeric[], $5::numeric[],
-						$6::text[], $7::text[], $8::text[], $9::text[], $10::numeric[],
-						$11::text[], $12::integer[], $13::text[], $14::timestamp[]
-					) AS t(article, manufacturer, model, width, diameter, drilling, radius,
-					       central_hole, color, price, store, balance, provider, email_date)
-				)
-				INSERT INTO price_disks
-				(article, manufacturer, model, width, diameter, drilling, radius,
-				 central_hole, color, price, store, balance, provider, email_date, isimport)
-				SELECT article, manufacturer, model, width, diameter, drilling, radius,
-				       central_hole, color, price, store, balance, provider, email_date, 0
-				FROM new_data nd
-				WHERE NOT EXISTS (
-					SELECT 1 FROM price_disks pd
-					WHERE pd.article = nd.article
-					  AND pd.price = nd.price
-					  AND pd.balance = nd.balance
-					  AND pd.store = nd.store
-				)
-			`
-
-			d.logger.Debug("Executing INSERT with deduplication",
-				zap.Int("batch_num", batchNum),
-				zap.Int("batch_size", len(batch)))
-
-			result, err := tx.ExecContext(ctx, query,
-				pq.Array(articles), pq.Array(manufacturers), pq.Array(models),
-				pq.Array(widths), pq.Array(diameters), pq.Array(drillings),
-				pq.Array(radiuses), pq.Array(centralHoles), pq.Array(colors),
-				pq.Array(prices), pq.Array(stores), pq.Array(balances),
-				pq.Array(providers), pq.Array(emailDates))
-			if err != nil {
-				d.logger.Error("Failed to insert batch",
-					zap.Int("batch_num", batchNum),
-					zap.Int("batch_start", i),
-					zap.Int("batch_size", len(batch)),
-					zap.Error(err))
-				return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
-			}
-
-			rowsAffected, _ := result.RowsAffected()
-			skipped := int64(len(batch)) - rowsAffected
-			d.logger.Info("Batch processed with deduplication",
-				zap.Int("batch_num", batchNum),
-				zap.Int("batch_size", len(batch)),
-				zap.Int64("inserted", rowsAffected),
-				zap.Int64("skipped_duplicates", skipped))
-		}
-	}
-
-	d.logger.Info("All batches inserted, marking email as processed",
-		zap.String("message_id", messageID))
-
-	// Mark email as processed with email date from first row
-	var emailDate time.Time
-	if len(rows) > 0 {
-		emailDate = rows[0].EmailDate
-	}
-
-	result, err := tx.ExecContext(ctx,
-		`INSERT INTO processed_emails (message_id, email_date) VALUES ($1, $2) ON CONFLICT (message_id) DO NOTHING`,
-		messageID, emailDate,
-	)
-	if err != nil {
-		d.logger.Error("Failed to mark email as processed",
-			zap.String("message_id", messageID),
-			zap.Error(err))
-		return fmt.Errorf("failed to mark email as processed: %w", err)
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	d.logger.Info("Email marked as processed",
-		zap.String("message_id", messageID),
-		zap.Int64("rows_affected", rowsAffected))
-
-	d.logger.Info("Committing transaction",
-		zap.Int("total_rows", len(rows)),
-		zap.String("message_id", messageID))
-
-	if err := tx.Commit(); err != nil {
-		d.logger.Error("Failed to commit transaction",
-			zap.Int("total_rows", len(rows)),
-			zap.String("message_id", messageID),
-			zap.Error(err))
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	d.logger.Info("Transaction committed successfully - disk price data saved to database",
-		zap.Int("total_rows", len(rows)),
-		zap.String("message_id", messageID))
-
-	return nil
-}
-
 // insertNomenclatureInTx inserts nomenclature data within an existing transaction
 // with deduplication by (article, mrc) - append-only, no deletes
 func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows []NomenclatureRow) error {
@@ -1087,8 +941,8 @@ func (d *Database) insertTyrePriceStockInTx(ctx context.Context, tx *sql.Tx, row
 	return nil
 }
 
-// insertDisksInTx inserts disk price data within an existing transaction
-func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []PriceDiskRow) error {
+// insertRimPriceStockInTx inserts/updates rim price stock data within an existing transaction
+func (d *Database) insertRimPriceStockInTx(ctx context.Context, tx *sql.Tx, rows []RimPriceStockRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1102,70 +956,120 @@ func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []Price
 		batch := rows[i:end]
 		batchNum := (i / batchSize) + 1
 
-		// Build array parameters for deduplication
-		articles := make([]string, len(batch))
-		manufacturers := make([]string, len(batch))
-		models := make([]string, len(batch))
-		widths := make([]float64, len(batch))
-		diameters := make([]float64, len(batch))
-		drillings := make([]string, len(batch))
-		radiuses := make([]string, len(batch))
-		centralHoles := make([]string, len(batch))
-		colors := make([]string, len(batch))
+		// Build array parameters
+		caes := make([]string, len(batch))
 		prices := make([]float64, len(batch))
-		stores := make([]string, len(batch))
-		balances := make([]int, len(batch))
+		stocks := make([]int, len(batch))
+		warehouseNames := make([]string, len(batch))
 		providers := make([]string, len(batch))
 		emailDates := make([]time.Time, len(batch))
 
 		for idx, row := range batch {
-			articles[idx] = row.Article
-			manufacturers[idx] = row.Manufacturer
-			models[idx] = row.Model
-			widths[idx] = row.Width
-			diameters[idx] = row.Diameter
-			drillings[idx] = row.Drilling
-			radiuses[idx] = row.Radius
-			centralHoles[idx] = row.CentralHole
-			colors[idx] = row.Color
+			caes[idx] = row.CAE
 			prices[idx] = row.Price
-			stores[idx] = row.Store
-			balances[idx] = row.Balance
+			stocks[idx] = row.Stock
+			warehouseNames[idx] = row.WarehouseName
 			providers[idx] = row.Provider
 			emailDates[idx] = row.EmailDate
 		}
 
-		// Use INSERT ... SELECT with deduplication via NOT EXISTS
+		// UPSERT with conditional UPDATE (same logic as tyres_prices_stock)
 		query := `
 			WITH new_data AS (
 				SELECT * FROM unnest(
-					$1::text[], $2::text[], $3::text[], $4::numeric[], $5::numeric[],
-					$6::text[], $7::text[], $8::text[], $9::text[], $10::numeric[],
-					$11::text[], $12::integer[], $13::text[], $14::timestamp[]
-				) AS t(article, manufacturer, model, width, diameter, drilling, radius,
-				       central_hole, color, price, store, balance, provider, email_date)
+					$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
+				) AS t(cae, price, stock, warehouse_name, provider, email_date)
 			)
-			INSERT INTO price_disks
-			(article, manufacturer, model, width, diameter, drilling, radius,
-			 central_hole, color, price, store, balance, provider, email_date, isimport)
-			SELECT article, manufacturer, model, width, diameter, drilling, radius,
-			       central_hole, color, price, store, balance, provider, email_date, 0
+			INSERT INTO rims_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, created_at)
+			SELECT cae, price, stock, warehouse_name, provider, email_date, 0, now()
 			FROM new_data nd
-			WHERE NOT EXISTS (
-				SELECT 1 FROM price_disks pd
-				WHERE pd.article = nd.article
-				  AND pd.price = nd.price
-				  AND pd.balance = nd.balance
-				  AND pd.store = nd.store
-			)
+			ON CONFLICT (cae, warehouse_name, provider)
+			DO UPDATE SET
+				price = EXCLUDED.price,
+				stock = EXCLUDED.stock,
+				email_date = EXCLUDED.email_date,
+				isimport = 0,
+				created_at = now()
+			WHERE rims_prices_stock.price != EXCLUDED.price
+			   OR rims_prices_stock.stock != EXCLUDED.stock
+			   OR rims_prices_stock.warehouse_name != EXCLUDED.warehouse_name
+			   OR rims_prices_stock.provider != EXCLUDED.provider
 		`
 
 		_, err := tx.ExecContext(ctx, query,
-			pq.Array(articles), pq.Array(manufacturers), pq.Array(models),
-			pq.Array(widths), pq.Array(diameters), pq.Array(drillings),
-			pq.Array(radiuses), pq.Array(centralHoles), pq.Array(colors),
-			pq.Array(prices), pq.Array(stores), pq.Array(balances),
-			pq.Array(providers), pq.Array(emailDates))
+			pq.Array(caes), pq.Array(prices), pq.Array(stocks),
+			pq.Array(warehouseNames), pq.Array(providers), pq.Array(emailDates))
+		if err != nil {
+			return fmt.Errorf("failed to upsert batch %d: %w", batchNum, err)
+		}
+	}
+
+	return nil
+}
+
+// insertRimNomenclatureInTx inserts rim nomenclature data within an existing transaction
+func (d *Database) insertRimNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows []NomenclatureRimRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	batchSize := 1000
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[i:end]
+		batchNum := (i / batchSize) + 1
+
+		// Build array parameters
+		caes := make([]string, len(batch))
+		names := make([]string, len(batch))
+		widths := make([]float64, len(batch))
+		diameters := make([]float64, len(batch))
+		boltsCounts := make([]int, len(batch))
+		boltsSpacings := make([]float64, len(batch))
+		ets := make([]string, len(batch))
+		dias := make([]string, len(batch))
+		models := make([]string, len(batch))
+		brands := make([]string, len(batch))
+		colors := make([]string, len(batch))
+		emailDates := make([]time.Time, len(batch))
+
+		for idx, row := range batch {
+			caes[idx] = row.CAE
+			names[idx] = row.Name
+			widths[idx] = row.Width
+			diameters[idx] = row.Diameter
+			boltsCounts[idx] = row.BoltsCount
+			boltsSpacings[idx] = row.BoltsSpacing
+			ets[idx] = row.ET
+			dias[idx] = row.DIA
+			models[idx] = row.Model
+			brands[idx] = row.Brand
+			colors[idx] = row.Color
+			emailDates[idx] = row.EmailDate
+		}
+
+		// INSERT with ON CONFLICT DO NOTHING (skip if cae exists)
+		query := `
+			WITH new_data AS (
+				SELECT * FROM unnest(
+					$1::text[], $2::text[], $3::numeric[], $4::numeric[], $5::integer[],
+					$6::numeric[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::timestamp[]
+				) AS t(cae, name, width, diameter, bolts_count, bolts_spacing, et, dia, model, brand, color, email_date)
+			)
+			INSERT INTO nomenclature_rims
+			(cae, name, width, diameter, bolts_count, bolts_spacing, et, dia, model, brand, color, email_date, isimport, created_at)
+			SELECT cae, name, width, diameter, bolts_count, bolts_spacing, et, dia, model, brand, color, email_date, 0, now()
+			FROM new_data nd
+			ON CONFLICT (cae) DO NOTHING
+		`
+
+		_, err := tx.ExecContext(ctx, query,
+			pq.Array(caes), pq.Array(names), pq.Array(widths), pq.Array(diameters),
+			pq.Array(boltsCounts), pq.Array(boltsSpacings), pq.Array(ets), pq.Array(dias),
+			pq.Array(models), pq.Array(brands), pq.Array(colors), pq.Array(emailDates))
 		if err != nil {
 			return fmt.Errorf("failed to insert batch %d: %w", batchNum, err)
 		}
@@ -1174,13 +1078,14 @@ func (d *Database) insertDisksInTx(ctx context.Context, tx *sql.Tx, rows []Price
 	return nil
 }
 
-// InsertAllEmailDataWithTransaction inserts all email data (nomenclature, tyres, disks)
+// InsertAllEmailDataWithTransaction inserts all email data (nomenclature, tyres, rims)
 // in a SINGLE atomic transaction. Email is marked as processed ONLY if ALL data saves successfully.
 func (d *Database) InsertAllEmailDataWithTransaction(
 	ctx context.Context,
 	nomenclatureRows []NomenclatureRow,
 	tyreRows []TyrePriceStockRow,
-	diskRows []PriceDiskRow,
+	rimPriceRows []RimPriceStockRow,
+	rimNomenclatureRows []NomenclatureRimRow,
 	messageID string,
 	emailDate time.Time,
 ) error {
@@ -1188,7 +1093,8 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 		zap.String("message_id", messageID),
 		zap.Int("nomenclature_rows", len(nomenclatureRows)),
 		zap.Int("tyre_rows", len(tyreRows)),
-		zap.Int("disk_rows", len(diskRows)))
+		zap.Int("rim_price_rows", len(rimPriceRows)),
+		zap.Int("rim_nomenclature_rows", len(rimNomenclatureRows)))
 
 	// Begin single transaction for ALL data
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -1230,22 +1136,37 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 			zap.Int("rows", len(tyreRows)))
 	}
 
-	// 3. Insert disk price data if present
-	if len(diskRows) > 0 {
-		d.logger.Info("Inserting disk price data",
-			zap.Int("rows", len(diskRows)))
+	// 3. Insert/update rim price stock data if present
+	if len(rimPriceRows) > 0 {
+		d.logger.Info("Inserting/updating rim price stock data",
+			zap.Int("rows", len(rimPriceRows)))
 
-		if err := d.insertDisksInTx(ctx, tx, diskRows); err != nil {
-			d.logger.Error("Failed to insert disk data",
+		if err := d.insertRimPriceStockInTx(ctx, tx, rimPriceRows); err != nil {
+			d.logger.Error("Failed to insert/update rim price data",
 				zap.Error(err))
-			return fmt.Errorf("failed to insert disks: %w", err)
+			return fmt.Errorf("failed to insert/update rim prices: %w", err)
 		}
 
-		d.logger.Info("Disk price data inserted successfully",
-			zap.Int("rows", len(diskRows)))
+		d.logger.Info("Rim price stock data inserted/updated successfully",
+			zap.Int("rows", len(rimPriceRows)))
 	}
 
-	// 4. Mark email as processed - ONLY at the end after ALL data is saved!
+	// 4. Insert rim nomenclature data if present
+	if len(rimNomenclatureRows) > 0 {
+		d.logger.Info("Inserting rim nomenclature data",
+			zap.Int("rows", len(rimNomenclatureRows)))
+
+		if err := d.insertRimNomenclatureInTx(ctx, tx, rimNomenclatureRows); err != nil {
+			d.logger.Error("Failed to insert rim nomenclature data",
+				zap.Error(err))
+			return fmt.Errorf("failed to insert rim nomenclature: %w", err)
+		}
+
+		d.logger.Info("Rim nomenclature data inserted successfully",
+			zap.Int("rows", len(rimNomenclatureRows)))
+	}
+
+	// 5. Mark email as processed - ONLY at the end after ALL data is saved!
 	d.logger.Info("All data inserted successfully, marking email as processed",
 		zap.String("message_id", messageID))
 
@@ -1265,12 +1186,13 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 		zap.String("message_id", messageID),
 		zap.Int64("rows_affected", rowsAffected))
 
-	// 5. Commit entire transaction
+	// 6. Commit entire transaction
 	d.logger.Info("Committing atomic transaction",
 		zap.String("message_id", messageID),
 		zap.Int("total_nomenclature", len(nomenclatureRows)),
 		zap.Int("total_tyres", len(tyreRows)),
-		zap.Int("total_disks", len(diskRows)))
+		zap.Int("total_rim_prices", len(rimPriceRows)),
+		zap.Int("total_rim_nomenclature", len(rimNomenclatureRows)))
 
 	if err := tx.Commit(); err != nil {
 		d.logger.Error("Failed to commit transaction",
@@ -1283,7 +1205,8 @@ func (d *Database) InsertAllEmailDataWithTransaction(
 		zap.String("message_id", messageID),
 		zap.Int("nomenclature_rows", len(nomenclatureRows)),
 		zap.Int("tyre_rows", len(tyreRows)),
-		zap.Int("disk_rows", len(diskRows)))
+		zap.Int("rim_price_rows", len(rimPriceRows)),
+		zap.Int("rim_nomenclature_rows", len(rimNomenclatureRows)))
 
 	return nil
 }
