@@ -929,7 +929,7 @@ func (d *Database) insertTyrePriceStockInTx(ctx context.Context, tx *sql.Tx, row
 					$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
 				) AS t(cae, price, stock, warehouse_name, provider, email_date)
 			)
-			INSERT INTO tyres_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, created_at)
+			INSERT INTO tyres_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, updated_at)
 			SELECT cae, price, stock, warehouse_name, provider, email_date, 0, now()
 			FROM new_data nd
 			ON CONFLICT (cae, warehouse_name, provider)
@@ -938,7 +938,7 @@ func (d *Database) insertTyrePriceStockInTx(ctx context.Context, tx *sql.Tx, row
 				stock = EXCLUDED.stock,
 				email_date = EXCLUDED.email_date,
 				isimport = 0,
-				created_at = now()
+				updated_at = now()
 			WHERE tyres_prices_stock.price != EXCLUDED.price
 			   OR tyres_prices_stock.stock != EXCLUDED.stock
 		`
@@ -993,7 +993,7 @@ func (d *Database) insertRimPriceStockInTx(ctx context.Context, tx *sql.Tx, rows
 					$1::text[], $2::numeric[], $3::integer[], $4::text[], $5::text[], $6::timestamp[]
 				) AS t(cae, price, stock, warehouse_name, provider, email_date)
 			)
-			INSERT INTO rims_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, created_at)
+			INSERT INTO rims_prices_stock (cae, price, stock, warehouse_name, provider, email_date, isimport, updated_at)
 			SELECT cae, price, stock, warehouse_name, provider, email_date, 0, now()
 			FROM new_data nd
 			ON CONFLICT (cae, warehouse_name, provider)
@@ -1002,7 +1002,7 @@ func (d *Database) insertRimPriceStockInTx(ctx context.Context, tx *sql.Tx, rows
 				stock = EXCLUDED.stock,
 				email_date = EXCLUDED.email_date,
 				isimport = 0,
-				created_at = now()
+				updated_at = now()
 			WHERE rims_prices_stock.price != EXCLUDED.price
 			   OR rims_prices_stock.stock != EXCLUDED.stock
 			   OR rims_prices_stock.warehouse_name != EXCLUDED.warehouse_name

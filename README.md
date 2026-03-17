@@ -1,101 +1,130 @@
 # Etalon Nomenclature Service
 
-Production-ready сервис на Golang для автоматической обработки email с Excel файлами и записи данных в PostgreSQL.
+Production-ready сервис на Golang для автоматической обработки email с Excel прайс-листами и записи данных в PostgreSQL.
 
-## Возможности
+## 🎯 Основные возможности
 
-- ✉️ Автоматическая проверка почты по IMAP (последние 3 дня)
-- 📊 Парсинг Excel файлов (.xlsx) со всех вкладок
-- 🗄️ Запись данных в PostgreSQL
-- 🔄 Поддержка множественных почтовых ящиков
-- 🛡️ Защита от повторной обработки (по Message-ID)
-- 📦 Streaming парсинг для экономии памяти
-- 🔒 SSL подключение к PostgreSQL
-- 🔧 **Автоматические миграции БД при старте**
-- ✅ **Проверка доступности БД и схемы**
-- 📝 Structured logging (zap)
-- 🐳 Docker и Docker Compose
-- ♻️ Graceful shutdown
-- 🚨 Panic recovery
-- 🔁 Автоматический retry при сбоях IMAP
+- ✉️ **Автоматическая обработка email** - IMAP мониторинг писем от поставщиков
+- 📊 **Парсинг Excel файлов** - поддержка .xls и .xlsx, streaming парсинг
+- 🗄️ **4 типа данных** - номенклатура МРЦ, цены шин/дисков, номенклатура дисков
+- 🔄 **Умная дедупликация** - APPEND-ONLY, UPSERT и SKIP логики
+- 🛡️ **Защита от повторов** - отслеживание обработанных писем
+- 🔒 **SSL подключения** - безопасное подключение к PostgreSQL
+- 🔧 **Автомиграции БД** - автоматическое применение при старте
+- 📝 **Structured logging** - JSON логи с ротацией
+- 🐳 **Docker ready** - полная поддержка контейнеризации
+- ♻️ **Graceful shutdown** - корректная остановка с завершением транзакций
 
-## Архитектура
+## 📦 Структура БД
 
-```
-.
-├── cmd/app/              # Точка входа приложения
-├── config/               # Конфигурация
-├── internal/
-│   ├── db/              # PostgreSQL клиент
-│   ├── imap/            # IMAP клиент
-│   ├── parser/          # Excel парсер
-│   └── service/         # Бизнес-логика
-├── migrations/           # SQL миграции
-├── docker/              # Dockerfile
-├── docker-compose.yml   # Docker Compose конфигурация
-└── config.example.yaml  # Пример конфигурации
-```
+### Таблицы
 
-## Требования
+| Таблица | Назначение | Источник | Логика |
+|---------|-----------|----------|--------|
+| `mrc_etalon` | Номенклатура с МРЦ | ЗАПАСКА (Excel с "МРЦ") | Append-only |
+| `tyres_prices_stock` | Цены и остатки шин | Все поставщики | UPSERT |
+| `rims_prices_stock` | Цены и остатки дисков | Все поставщики | UPSERT |
+| `nomenclature_rims` | Номенклатура дисков | ЗАПАСКА (COX/FF/Koko/Sakura) | SKIP |
+| `processed_emails` | Обработанные письма | Система | Append-only |
 
-- Go 1.22+
+### Поставщики
+
+- **ЗАПАСКА** (pna@sibzapaska.ru) - номенклатура МРЦ, прайсы, номенклатура дисков
+- **БИГМАШИН** - прайсы шин и дисков
+- **БРИНЕКС** - прайсы шин и дисков
+
+## 🚀 Быстрый старт
+
+### Требования
+
+- Go 1.22+ (для разработки)
 - PostgreSQL 14+
 - Docker и Docker Compose (для продакшена)
+- IMAP доступ к почтовому ящику
 
-## Быстрый старт
-
-### 1. Клонирование и настройка
+### Установка
 
 ```bash
+# 1. Клонирование репозитория
 git clone <repository>
 cd Etalon_nomenclature
-```
 
-### 2. Создание конфигурации
-
-```bash
+# 2. Создание конфигурации
 cp config.example.yaml config.yaml
+
+# 3. Редактирование config.yaml
+# Укажите параметры БД и почтовых ящиков
+
+# 4. Запуск с Docker Compose
+docker compose up -d
+
+# 5. Просмотр логов
+docker compose logs -f app
 ```
 
-Отредактируйте `config.yaml`:
+### Конфигурация
+
+Минимальный `config.yaml`:
 
 ```yaml
 poll_interval: 1m
 
 database:
-  dsn: "postgresql://user:password@host:5432/database?sslmode=verify-full"
-  ssl_root_cert: "/app/certs/root.crt"
+  dsn: "postgresql://user:password@host:5432/db?sslmode=require"
 
 mailboxes:
-  - email: "your-email@domain.com"
+  - email: "zakupki@etalon-shina.ru"
     password: "your-password"
     host: "mail.hosting.reg.ru"
     port: 993
+
+allowed_senders:
+  - "pna@sibzapaska.ru"
 ```
 
-### 3. Применение миграций
+## 📚 Документация
 
-> ⚠️ **Автоматические миграции**: Начиная с версии с автоматическими миграциями, приложение **самостоятельно создает таблицы** при первом запуске. Ручное применение миграций не требуется!
+### Основная документация
 
-Приложение автоматически:
-- ✅ Проверяет подключение к БД при старте
-- ✅ Проверяет наличие необходимых таблиц
-- ✅ Создает таблицы, если их нет
-- ✅ Применяет все необходимые индексы
+- [📖 Индекс документации](docs/INDEX.md) - Полный список документов
+- [🚀 Деплой на продакшн](DEPLOYMENT.md) - Подробные инструкции
+- [⚡ Быстрая справка](QUICK_REFERENCE.md) - Частые команды и запросы
+- [✅ Production Checklist](PRODUCTION_CHECKLIST.md) - Чеклист перед деплоем
 
-**Ручное применение (опционально):**
+### Логика работы
 
-Если нужно применить миграции вручную:
+- [📋 Обработка файлов](FILE_PROCESSING_LOGIC.md) - Детальная логика парсинга
+- [🔄 Дедупликация](DEDUPLICATION_LOGIC.md) - Логика дедупликации данных
 
-```bash
-# Подключитесь к вашей PostgreSQL БД
-psql "postgresql://gen_user:uzShH%3CA8S%3B7c.e@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"
+### Миграции БД
 
-# Выполните миграцию
-\i migrations/001_init.sql
+- [🔄 Миграция tyres](MIGRATION_TYRES_PRICES_STOCK.md) - price_tires → tyres_prices_stock
+- [🔄 Миграция rims](MIGRATION_RIMS_PRICES_STOCK.md) - price_disks → rims_prices_stock + nomenclature_rims
+- [🏷️ Переименование](MIGRATION_RENAME_TABLE.md) - etalon_nomenclature → mrc_etalon
+- [➕ Добавление isimport_1С](MIGRATION_ADD_ISIMPORT_1C.md) - Флаг импорта в 1С
+
+## 🏗️ Архитектура
+
+```
+etalon-nomenclature/
+├── cmd/app/              # Точка входа
+├── internal/
+│   ├── db/              # PostgreSQL + миграции
+│   ├── imap/            # IMAP клиент
+│   ├── parser/          # Excel парсеры
+│   │   ├── excel.go     # Парсер номенклатуры МРЦ
+│   │   ├── price.go     # Парсер цен шин
+│   │   └── disk.go      # Парсер цен/номенклатуры дисков
+│   └── service/         # Бизнес-логика
+├── migrations/           # SQL миграции
+├── docker/              # Dockerfile
+├── docs/                # Документация
+└── config.yaml          # Конфигурация (не в git)
 ```
 
-### 4. Локальный запуск
+## 🔧 Разработка
+
+### Локальный запуск
 
 ```bash
 # Установка зависимостей
@@ -105,407 +134,150 @@ go mod download
 go run cmd/app/main.go
 ```
 
-### 5. Docker запуск
-
-#### Способ 1: Environment Variables (Рекомендуется для облачных платформ)
-
-```bash
-# Создать конфигурацию через интерактивный скрипт
-./scripts/prepare-env.sh
-
-# Или вручную создать .env файл
-cp .env.example .env
-nano .env
-
-# Сборка и запуск
-docker compose build
-docker compose up -d
-
-# Просмотр логов
-docker compose logs -f app
-```
-
-**Подробнее:** См. [DOCKER_ENV_MIGRATION.md](DOCKER_ENV_MIGRATION.md)
-
-#### Способ 2: Volume Mounts (Для локальной разработки)
-
-```bash
-# Создать config.yaml
-cp config.example.yaml config.yaml
-nano config.yaml
-
-# Сборка и запуск
-docker compose up -d
-
-# Просмотр логов
-docker compose logs -f app
-
-# Остановка
-docker compose down
-```
-
-**Примечание:** Некоторые платформы (CI/CD, managed services) не поддерживают volume mounts. В таких случаях используйте способ 1.
-
-## Конфигурация
-
-Сервис поддерживает два способа конфигурации:
-1. **Файл config.yaml** (традиционный способ)
-2. **Environment Variables** (рекомендуется для Docker/Cloud)
-
-### Параметры config.yaml
-
-| Параметр | Описание | Пример |
-|----------|----------|--------|
-| `poll_interval` | Интервал проверки почты | `1m` |
-| `database.dsn` | PostgreSQL connection string | `postgresql://...` |
-| `database.ssl_root_cert` | Путь к SSL сертификату | `/app/certs/root.crt` |
-| `mailboxes[].email` | Email адрес | `user@domain.com` |
-| `mailboxes[].password` | Пароль от почты | `password` |
-| `mailboxes[].host` | IMAP хост | `mail.hosting.reg.ru` |
-| `mailboxes[].port` | IMAP порт | `993` |
-
-### Множественные почтовые ящики
-
-Добавьте столько почтовых ящиков, сколько нужно:
-
-```yaml
-mailboxes:
-  - email: "box1@domain.com"
-    password: "pass1"
-    host: "mail.hosting.reg.ru"
-    port: 993
-
-  - email: "box2@domain.com"
-    password: "pass2"
-    host: "mail.hosting.reg.ru"
-    port: 993
-```
-
-### Environment Variables (Docker/Cloud)
-
-| Переменная | Описание | Пример |
-|-----------|----------|--------|
-| `DATABASE_DSN` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db` |
-| `DATABASE_MAX_OPEN_CONNS` | Макс. открытых соединений | `25` |
-| `DATABASE_MAX_IDLE_CONNS` | Макс. idle соединений | `5` |
-| `DATABASE_CONN_MAX_LIFETIME` | Время жизни соединения | `5m` |
-| `PGSSLROOTCERT_BASE64` | SSL сертификат (base64) | `LS0tLS1CRUdJTi...` |
-| `MAILBOXES_JSON` | Почтовые ящики (JSON) | `[{"email":"...","password":"..."}]` |
-| `POLL_INTERVAL` | Интервал проверки | `1m` |
-| `TZ` | Часовой пояс | `Europe/Moscow` |
-
-**Пример .env файла:**
-```bash
-DATABASE_DSN=postgresql://gen_user:password@host:5432/db
-PGSSLROOTCERT_BASE64=LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUR...
-MAILBOXES_JSON='[{"email":"user@domain.com","password":"pass","host":"mail.hosting.reg.ru","port":993}]'
-POLL_INTERVAL=1m
-TZ=Europe/Moscow
-```
-
-Подробная документация: [DOCKER_ENV_MIGRATION.md](DOCKER_ENV_MIGRATION.md)
-
-## База данных
-
-### Таблица: etalon_nomenclature
-
-Хранит данные из Excel файлов:
-
-| Колонка | Тип | Описание |
-|---------|-----|----------|
-| `id` | SERIAL | Первичный ключ |
-| `article` | TEXT | Артикул |
-| `brand` | TEXT | Марка |
-| `type` | TEXT | Тип (опционально) |
-| `size_model` | TEXT | Размер и Модель |
-| `nomenclature` | TEXT | Номенклатура |
-| `mrc` | NUMERIC | МРЦ (цена) |
-| `isimport` | INTEGER | Флаг импорта (0/1) |
-| `created_at` | TIMESTAMP | Дата загрузки |
-
-### Таблица: processed_emails
-
-Защита от повторной обработки:
-
-| Колонка | Тип | Описание |
-|---------|-----|----------|
-| `id` | SERIAL | Первичный ключ |
-| `message_id` | TEXT | Message-ID письма (уникальный) |
-| `processed_at` | TIMESTAMP | Дата обработки |
-
-## Логика работы
-
-### Polling цикл
-
-1. Каждую **1 минуту** сервис проверяет все настроенные почтовые ящики
-2. Ищет письма за **текущий день** (SINCE today)
-3. Фильтрует письма с вложениями `.xlsx`
-4. Проверяет размер файла (макс. 10 MB)
-5. Проверяет, не обработано ли письмо ранее (по Message-ID)
-
-### Обработка Excel
-
-1. **Streaming парсинг** — экономия памяти
-2. Обработка **всех вкладок** в файле
-3. Поиск строки с колонками:
-   - Артикул
-   - Марка
-   - Тип (опционально)
-   - Размер и Модель
-   - Номенклатура
-   - МРЦ
-4. Парсинг всех строк после заголовка
-
-### Запись в БД
-
-1. Все данные вставляются в транзакции
-2. После успешной вставки сохраняется Message-ID
-3. При ошибке транзакция откатывается, Message-ID не сохраняется
-4. Письмо можно будет обработать повторно
-
-### Обработка ошибок
-
-- **IMAP ошибки**: автоматический retry (3 попытки с задержкой 5 сек)
-- **Парсинг ошибки**: логируются, письмо помечается как обработанное
-- **DB ошибки**: транзакция откатывается, письмо не помечается
-- **Panic**: перехватывается, логируется stack trace, сервис продолжает работу
-
-## Makefile команды
-
-```bash
-make help           # Показать все команды
-make build          # Собрать бинарь
-make run            # Запустить локально
-make test           # Запустить тесты
-make docker-build   # Собрать Docker образ
-make docker-up      # Запустить в Docker
-make docker-down    # Остановить Docker
-make docker-logs    # Показать логи
-make migrate        # Применить миграции
-```
-
-## Мониторинг
-
-### Логи
-
-Сервис использует structured logging (zap):
-
-```json
-{
-  "level": "info",
-  "ts": 1234567890,
-  "msg": "Processing email",
-  "message_id": "<id>",
-  "subject": "Subject",
-  "attachments": 2
-}
-```
-
-### Health Check
-
-Docker Compose включает health check:
-
-```bash
-docker compose ps
-```
-
-### Метрики логов
-
-Основные события для мониторинга:
-
-- `"Starting email processing cycle"` — начало цикла
-- `"Found emails with attachments"` — найдены письма
-- `"Successfully processed email"` — письмо обработано
-- `"Failed to process email"` — ошибка обработки
-- `"Panic recovered"` — критическая ошибка
-
-## Production deployment
-
-### На сервере Timeweb VM
-
-1. **Установите Docker и Docker Compose**
-
-```bash
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-```
-
-2. **Загрузите SSL сертификат**
-
-```bash
-mkdir -p ~/.cloud-certs
-# Поместите root.crt в ~/.cloud-certs/
-```
-
-3. **Создайте config.yaml**
-
-```bash
-nano config.yaml
-# Вставьте вашу конфигурацию
-```
-
-4. **Запустите сервис**
-
-```bash
-docker compose up -d
-```
-
-5. **Проверьте логи**
-
-```bash
-docker compose logs -f app
-```
-
-### Автозапуск при перезагрузке
-
-Docker Compose с `restart: unless-stopped` автоматически перезапустит сервис.
-
-### Обновление
-
-```bash
-git pull
-docker compose down
-docker compose build
-docker compose up -d
-```
-
-## Безопасность
-
-- ✅ Не хранит пароли в коде
-- ✅ SSL для PostgreSQL
-- ✅ Non-root пользователь в Docker
-- ✅ Ограничение ресурсов в Docker
-- ✅ Проверка размера вложений
-- ✅ Prepared statements для SQL
-
-## Troubleshooting
-
-### Не удается подключиться к IMAP
-
-```
-Проверьте:
-1. Правильность host/port в config.yaml
-2. Логин и пароль
-3. Доступ к mail.hosting.reg.ru:993
-4. Файрвол на сервере
-```
-
-### Не удается подключиться к PostgreSQL
-
-```
-Проверьте:
-1. DSN в config.yaml
-2. Наличие сертификата root.crt
-3. Переменную PGSSLROOTCERT
-4. Доступ к БД с сервера
-```
-
-### Письма не обрабатываются
-
-```
-Проверьте:
-1. Логи: docker compose logs -f app
-2. Таблицу processed_emails — возможно письмо уже обработано
-3. Формат Excel файла — должны быть правильные колонки
-```
-
-### Высокое потребление памяти
-
-```
-1. Проверьте размер Excel файлов
-2. Убедитесь, что используется streaming парсинг
-3. Настройте limits в docker-compose.yml
-```
-
-## Технические детали
-
-### Автоматические миграции БД
-
-При запуске приложение **автоматически проверяет и создает схему базы данных**:
-
-**Процесс инициализации:**
-1. ✅ Проверка подключения к PostgreSQL (`PingContext`)
-2. ✅ Проверка наличия таблиц `etalon_nomenclature` и `processed_emails`
-3. ✅ Автоматическое создание таблиц, если их нет
-4. ✅ Создание всех необходимых индексов
-
-**Логи при старте:**
-```
-INFO: Database connection established successfully
-INFO: Checking database schema...
-INFO: Required tables not found, applying migrations...
-INFO: Migrations applied successfully
-```
-
-**Что создается автоматически:**
-- Таблица `etalon_nomenclature` с колонками для данных из Excel
-- Таблица `processed_emails` для защиты от дубликатов
-- Индексы на `article`, `brand`, `isimport`, `created_at`
-- Уникальный индекс на `message_id`
-
-Это означает, что **не нужно вручную применять миграции** - просто запустите приложение с правильной конфигурацией БД!
-
-**Расположение кода:** `internal/db/postgres.go` (функции `ensureSchema`, `checkTablesExist`, `applyMigrations`)
-
-### Период мониторинга почты
-
-Сервис проверяет письма за **последние 3 дня** (настраивается в `internal/imap/client.go`, константа `lookbackDays`).
-
-**Как это работает:**
-- При каждой проверке сервис ищет все письма с Excel-вложениями за последние 3 дня
-- Благодаря таблице `processed_emails` (хранит `message_id`), каждое письмо обрабатывается только один раз
-- Это гарантирует, что не будут пропущены письма, пришедшие во время простоя сервиса
-
-**Изменение периода мониторинга:**
-
-```go
-// В файле internal/imap/client.go
-const (
-    lookbackDays = 3  // Измените на нужное количество дней
-)
-```
-
-После изменения пересоберите Docker образ:
-```bash
-docker compose build
-docker compose up -d
-```
-
-### Защита от дубликатов
-
-Система использует таблицу `processed_emails` для хранения `message_id` обработанных писем:
-- Перед обработкой проверяется наличие `message_id` в таблице
-- Если письмо уже обработано - пропускается
-- Это позволяет безопасно перезапускать сервис и искать письма за несколько дней
-
-## Разработка
-
-### Добавление новых колонок
-
-1. Обновите структуру `NomenclatureRow` в `internal/db/postgres.go`
-2. Добавьте колонку в SQL миграцию
-3. Обновите парсер в `internal/parser/excel.go`
-
 ### Тестирование
 
 ```bash
 # Запуск всех тестов
-make test
+go test ./...
 
-# С покрытием
-make test-coverage
+# Тестирование парсеров
+go test ./internal/parser/...
 
-# Конкретный пакет
-go test -v ./internal/parser
+# Тестирование БД
+go test ./internal/db/...
 ```
 
-## Лицензия
+### Сборка
 
-MIT
+```bash
+# Локальная сборка
+go build -o app cmd/app/main.go
 
-## Поддержка
+# Сборка для продакшена (в Docker)
+docker compose build
+```
 
-При возникновении проблем:
-1. Проверьте логи
-2. Изучите раздел Troubleshooting
-3. Создайте issue в репозитории
+## 📊 Мониторинг
+
+### Логи
+
+```bash
+# Просмотр логов
+docker compose logs -f app
+
+# Последние 100 строк
+docker compose logs --tail=100 app
+
+# Логи с временными метками
+docker compose logs -f --timestamps app
+```
+
+### Статус
+
+```bash
+# Статус контейнеров
+docker compose ps
+
+# Использование ресурсов
+docker stats
+```
+
+### Проверка БД
+
+```sql
+-- Количество записей
+SELECT 'mrc_etalon' as table, COUNT(*) as count FROM mrc_etalon
+UNION ALL
+SELECT 'tyres_prices_stock', COUNT(*) FROM tyres_prices_stock
+UNION ALL
+SELECT 'rims_prices_stock', COUNT(*) FROM rims_prices_stock
+UNION ALL
+SELECT 'nomenclature_rims', COUNT(*) FROM nomenclature_rims
+UNION ALL
+SELECT 'processed_emails', COUNT(*) FROM processed_emails;
+
+-- Последние обработанные письма
+SELECT message_id, email_date, processed_at
+FROM processed_emails
+ORDER BY processed_at DESC
+LIMIT 10;
+```
+
+## 🔐 Безопасность
+
+### Конфиденциальные файлы
+
+Следующие файлы содержат секреты и **не должны** попадать в Git:
+
+- `config.yaml` - пароли БД и email
+- `.env` - переменные окружения
+- `certs/*.crt` - SSL сертификаты
+
+Все они добавлены в `.gitignore`.
+
+### SSL Подключение
+
+Для SSL подключения к PostgreSQL:
+
+```yaml
+database:
+  dsn: "postgresql://user:password@host:5432/db?sslmode=verify-full"
+  ssl_root_cert: "/path/to/root.crt"
+```
+
+## 🐛 Troubleshooting
+
+### Проблема: Письма не обрабатываются
+
+```bash
+# Проверить подключение к IMAP
+docker compose logs app | grep -i "imap"
+
+# Проверить allowed_senders в config.yaml
+```
+
+### Проблема: Ошибки БД
+
+```bash
+# Проверить подключение к БД
+docker compose logs app | grep -i "database"
+
+# Проверить миграции
+docker compose logs app | grep -i "migration"
+```
+
+### Проблема: Парсинг не работает
+
+```bash
+# Включить debug логи
+# В config.yaml установите log_level: debug
+
+# Проверить логи парсинга
+docker compose logs app | grep -i "parsing"
+```
+
+## 📄 Лицензия
+
+MIT License - см. файл [LICENSE](LICENSE)
+
+## 🤝 Вклад в проект
+
+Проект готов к продакшену. Для изменений:
+
+1. Создайте feature branch
+2. Внесите изменения
+3. Напишите тесты
+4. Создайте Pull Request
+
+## 📞 Контакты
+
+При возникновении вопросов:
+- Проверьте [документацию](docs/INDEX.md)
+- Изучите [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- Проверьте [DEPLOYMENT.md](DEPLOYMENT.md)
+
+---
+
+**Версия:** 1.0.0
+**Статус:** Production Ready ✅
+**Дата релиза:** 17.03.2026
