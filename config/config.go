@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -43,6 +44,19 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Parse allowed_senders - support both array and comma-separated string
+	if len(cfg.AllowedSenders) == 1 && strings.Contains(cfg.AllowedSenders[0], ",") {
+		// Split comma-separated string into array
+		parts := strings.Split(cfg.AllowedSenders[0], ",")
+		cfg.AllowedSenders = make([]string, 0, len(parts))
+		for _, part := range parts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				cfg.AllowedSenders = append(cfg.AllowedSenders, trimmed)
+			}
+		}
 	}
 
 	// Set defaults

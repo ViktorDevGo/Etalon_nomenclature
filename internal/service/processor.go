@@ -250,38 +250,42 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 				allTyreRows = append(allTyreRows, priceRows...)
 			}
 
-			// For ЗАПАСКА and БРИНЕКС, also try to parse disks from the same file
-			if provider == parser.ProviderZapaska || provider == parser.ProviderBrinex {
-				diskResult, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
-				if err != nil {
-					// For БРИНЕКС, disk parsing failure is critical (file always contains "Автодиски" sheet)
-					// For ЗАПАСКА, it's optional (some files may not have disk section)
-					if provider == parser.ProviderBrinex {
-						p.logger.Error("Failed to parse disk section from БРИНЕКС file (should always have disks)",
-							zap.String("filename", attachment.Filename),
-							zap.String("provider", string(provider)),
-							zap.Error(err))
-						return fmt.Errorf("failed to parse disks from БРИНЕКС file: %w", err)
-					} else {
-						p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
-							zap.String("filename", attachment.Filename),
-							zap.String("provider", string(provider)),
-							zap.Error(err))
-					}
-				} else if len(diskResult.RimPriceRows) > 0 {
-					p.logger.Info("Parsed disk section from price attachment",
+			// Try to parse disks from the same file (all providers can have disk prices)
+			diskResult, err := diskParser.Parse(attachment.Content, attachment.Filename, string(provider), email.Date)
+			if err != nil {
+				// For БРИНЕКС, disk parsing failure is critical (file always contains "Автодиски" sheet)
+				// For other providers, it's optional (some files may not have disk section)
+				if provider == parser.ProviderBrinex {
+					p.logger.Error("Failed to parse disk section from БРИНЕКС file (should always have disks)",
 						zap.String("filename", attachment.Filename),
 						zap.String("provider", string(provider)),
-						zap.Int("rim_price_rows", len(diskResult.RimPriceRows)),
-						zap.Int("rim_nomenclature_rows", len(diskResult.RimNomenclatureRows)))
-					allRimPriceRows = append(allRimPriceRows, diskResult.RimPriceRows...)
-					allRimNomenclatureRows = append(allRimNomenclatureRows, diskResult.RimNomenclatureRows...)
-				} else if provider == parser.ProviderBrinex {
-					// БРИНЕКС file should always have disks
-					p.logger.Error("No disks found in БРИНЕКС file (should always have disks)",
-						zap.String("filename", attachment.Filename))
-					return fmt.Errorf("no disks found in БРИНЕКС file")
+						zap.Error(err))
+					return fmt.Errorf("failed to parse disks from БРИНЕКС file: %w", err)
+				} else {
+					p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
+						zap.String("filename", attachment.Filename),
+						zap.String("provider", string(provider)),
+						zap.Error(err))
 				}
+			} else if len(diskResult.RimPriceRows) > 0 {
+				p.logger.Info("Parsed disk section from price attachment",
+					zap.String("filename", attachment.Filename),
+					zap.String("provider", string(provider)),
+					zap.Int("rim_price_rows", len(diskResult.RimPriceRows)),
+					zap.Int("rim_nomenclature_rows", len(diskResult.RimNomenclatureRows)))
+
+				// Add rim prices for all providers
+				allRimPriceRows = append(allRimPriceRows, diskResult.RimPriceRows...)
+
+				// Add rim nomenclature ONLY for ЗАПАСКА
+				if provider == parser.ProviderZapaska {
+					allRimNomenclatureRows = append(allRimNomenclatureRows, diskResult.RimNomenclatureRows...)
+				}
+			} else if provider == parser.ProviderBrinex {
+				// БРИНЕКС file should always have disks
+				p.logger.Error("No disks found in БРИНЕКС file (should always have disks)",
+					zap.String("filename", attachment.Filename))
+				return fmt.Errorf("no disks found in БРИНЕКС file")
 			}
 
 		} else if fileType == parser.FileTypeDisk {
