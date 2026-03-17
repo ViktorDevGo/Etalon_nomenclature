@@ -890,11 +890,70 @@ func (d *Database) insertNomenclatureInTx(ctx context.Context, tx *sql.Tx, rows 
 	return nil
 }
 
+// deduplicateTyrePriceStockRows removes duplicate rows by (cae, warehouse_name, provider) key, keeping last occurrence
+func deduplicateTyrePriceStockRows(rows []TyrePriceStockRow) []TyrePriceStockRow {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	// Use map to track last occurrence of each unique key
+	keyMap := make(map[string]int) // key -> index in rows
+	for i, row := range rows {
+		key := row.CAE + "|" + row.WarehouseName + "|" + row.Provider
+		keyMap[key] = i
+	}
+
+	// Build deduplicated result preserving order of last occurrences
+	result := make([]TyrePriceStockRow, 0, len(keyMap))
+	seen := make(map[string]bool)
+	for i, row := range rows {
+		key := row.CAE + "|" + row.WarehouseName + "|" + row.Provider
+		// Only add if this is the last occurrence of this key
+		if keyMap[key] == i && !seen[key] {
+			result = append(result, row)
+			seen[key] = true
+		}
+	}
+
+	return result
+}
+
+// deduplicateRimPriceStockRows removes duplicate rows by (cae, warehouse_name, provider) key, keeping last occurrence
+func deduplicateRimPriceStockRows(rows []RimPriceStockRow) []RimPriceStockRow {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	// Use map to track last occurrence of each unique key
+	keyMap := make(map[string]int) // key -> index in rows
+	for i, row := range rows {
+		key := row.CAE + "|" + row.WarehouseName + "|" + row.Provider
+		keyMap[key] = i
+	}
+
+	// Build deduplicated result preserving order of last occurrences
+	result := make([]RimPriceStockRow, 0, len(keyMap))
+	seen := make(map[string]bool)
+	for i, row := range rows {
+		key := row.CAE + "|" + row.WarehouseName + "|" + row.Provider
+		// Only add if this is the last occurrence of this key
+		if keyMap[key] == i && !seen[key] {
+			result = append(result, row)
+			seen[key] = true
+		}
+	}
+
+	return result
+}
+
 // insertTyrePriceStockInTx inserts/updates tyre price stock data within an existing transaction
 func (d *Database) insertTyrePriceStockInTx(ctx context.Context, tx *sql.Tx, rows []TyrePriceStockRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	// Deduplicate rows by (cae, warehouse_name, provider) - keep last occurrence
+	rows = deduplicateTyrePriceStockRows(rows)
 
 	batchSize := 1000
 	for i := 0; i < len(rows); i += batchSize {
@@ -959,6 +1018,9 @@ func (d *Database) insertRimPriceStockInTx(ctx context.Context, tx *sql.Tx, rows
 	if len(rows) == 0 {
 		return nil
 	}
+
+	// Deduplicate rows by (cae, warehouse_name, provider) - keep last occurrence
+	rows = deduplicateRimPriceStockRows(rows)
 
 	batchSize := 1000
 	for i := 0; i < len(rows); i += batchSize {
