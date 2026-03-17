@@ -115,7 +115,9 @@
       "Bash(/tmp/cleanup_analysis.txt:*)",
       "Bash(./cleanup_project.sh:*)",
       "Bash(PGPASSWORD='Poison-79' psql:*)",
-      "Bash(PROJECT_STRUCTURE.md:*)"
+      "Bash(PROJECT_STRUCTURE.md:*)",
+      "Bash(/tmp/run_diagnostics.sh:*)",
+      "Bash(__NEW_LINE_46b56a84a2b184ad__ chmod +x /tmp/run_diagnostics.sh)"
     ]
   }
 }
