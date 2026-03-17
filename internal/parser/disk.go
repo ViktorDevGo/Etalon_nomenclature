@@ -689,6 +689,10 @@ func (p *DiskParser) createRimNomenclature(diskData *PriceDiskRow, article strin
 
 	nomenclature := strings.Join(nomenclatureParts, " ")
 
+	// Parse ET and DIA numeric values from strings like "ET35" or "D66.1"
+	et := parseETValue(diskData.Radius)
+	dia := parseDIAValue(diskData.CentralHole)
+
 	return &db.NomenclatureRimRow{
 		CAE:          article,
 		Name:         nomenclature,
@@ -696,13 +700,52 @@ func (p *DiskParser) createRimNomenclature(diskData *PriceDiskRow, article strin
 		Diameter:     diskData.Diameter,
 		BoltsCount:   boltsCount,
 		BoltsSpacing: boltsSpacing,
-		ET:           diskData.Radius,
-		DIA:          diskData.CentralHole,
+		ET:           et,
+		DIA:          dia,
 		Model:        diskData.Model,
 		Brand:        diskData.Manufacturer,
 		Color:        diskData.Color,
 		EmailDate:    emailDate,
 	}, nil
+}
+
+// parseETValue extracts numeric value from ET string like "ET35", "ЕТ40", "35"
+func parseETValue(s string) float64 {
+	if s == "" {
+		return 0
+	}
+
+	// Remove "ET" or "ЕТ" prefix
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(strings.ToUpper(s), "ET")
+	s = strings.TrimPrefix(strings.ToUpper(s), "ЕТ")
+	s = strings.TrimSpace(s)
+
+	// Try to parse as float
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
+// parseDIAValue extracts numeric value from DIA string like "D66.1", "66.1"
+func parseDIAValue(s string) float64 {
+	if s == "" {
+		return 0
+	}
+
+	// Remove "D" prefix
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(strings.ToUpper(s), "D")
+	s = strings.TrimSpace(s)
+
+	// Try to parse as float
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return val
 }
 
 // parseDiskFromColumns parses disk data from structured columns

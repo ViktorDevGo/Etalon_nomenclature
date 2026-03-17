@@ -178,8 +178,8 @@ type NomenclatureRimRow struct {
 	Diameter     float64
 	BoltsCount   int
 	BoltsSpacing float64
-	ET           string
-	DIA          string
+	ET           float64
+	DIA          float64
 	Model        string
 	Brand        string
 	Color        string
@@ -1104,8 +1104,8 @@ func (d *Database) insertRimNomenclatureInTx(ctx context.Context, tx *sql.Tx, ro
 		diameters := make([]float64, len(batch))
 		boltsCounts := make([]int, len(batch))
 		boltsSpacings := make([]float64, len(batch))
-		ets := make([]string, len(batch))
-		dias := make([]string, len(batch))
+		ets := make([]float64, len(batch))
+		dias := make([]float64, len(batch))
 		models := make([]string, len(batch))
 		brands := make([]string, len(batch))
 		colors := make([]string, len(batch))
@@ -1131,7 +1131,7 @@ func (d *Database) insertRimNomenclatureInTx(ctx context.Context, tx *sql.Tx, ro
 			WITH new_data AS (
 				SELECT * FROM unnest(
 					$1::text[], $2::text[], $3::numeric[], $4::numeric[], $5::integer[],
-					$6::numeric[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::timestamp[]
+					$6::numeric[], $7::numeric[], $8::numeric[], $9::text[], $10::text[], $11::text[], $12::timestamp[]
 				) AS t(cae, name, width, diameter, bolts_count, bolts_spacing, et, dia, model, brand, color, email_date)
 			)
 			INSERT INTO nomenclature_rims
