@@ -163,8 +163,11 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	// Check if sender is allowed (if filter is configured)
 	if len(p.config.AllowedSenders) > 0 {
 		allowed := false
+		emailFromLower := strings.ToLower(email.From)
 		for _, sender := range p.config.AllowedSenders {
-			if email.From == sender {
+			// Check if the From field contains the allowed sender email
+			// Handles formats like "Name <email@domain.com>" or just "email@domain.com"
+			if strings.Contains(emailFromLower, strings.ToLower(sender)) {
 				allowed = true
 				break
 			}
