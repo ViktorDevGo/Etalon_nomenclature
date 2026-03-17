@@ -119,15 +119,21 @@ func (p *Processor) processMailbox(ctx context.Context, mailboxCfg config.Mailbo
 			return ctx.Err()
 		}
 
-		if err := p.processEmail(ctx, email); err != nil {
+		wasProcessed, err := p.processEmail(ctx, email)
+		if err != nil {
 			p.logger.Error("Failed to process email",
 				zap.String("message_id", email.MessageID),
 				zap.String("subject", email.Subject),
+				zap.String("from", email.From),
 				zap.Error(err))
 			continue
 		}
 
-		processed++
+		if wasProcessed {
+			processed++
+		} else {
+			skipped++
+		}
 	}
 
 	p.logger.Info("Mailbox processing completed",
@@ -138,8 +144,9 @@ func (p *Processor) processMailbox(ctx context.Context, mailboxCfg config.Mailbo
 	return nil
 }
 
-// processEmail processes a single email
-func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
+// processEmail processes a single email and returns (wasProcessed, error)
+// wasProcessed = true if email was successfully processed, false if skipped
+func (p *Processor) processEmail(ctx context.Context, email imap.Email) (bool, error) {
 	// Check blacklisted domains (system emails that should never be processed)
 	blacklistedDomains := []string{
 		"@bitrix24.com",
@@ -153,10 +160,11 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	emailLower := strings.ToLower(email.From)
 	for _, blacklisted := range blacklistedDomains {
 		if strings.Contains(emailLower, blacklisted) {
-			p.logger.Debug("Email from blacklisted domain, skipping",
+			p.logger.Info("Skipping email from blacklisted domain",
 				zap.String("from", email.From),
+				zap.String("subject", email.Subject),
 				zap.String("reason", "System/automated email"))
-			return nil
+			return false, nil
 		}
 	}
 
@@ -173,24 +181,26 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			}
 		}
 		if !allowed {
-			p.logger.Debug("Email from non-allowed sender, skipping",
+			p.logger.Info("Skipping email from non-allowed sender",
 				zap.String("from", email.From),
+				zap.String("subject", email.Subject),
 				zap.Strings("allowed_senders", p.config.AllowedSenders))
-			return nil
+			return false, nil
 		}
 	}
 
 	// Check if already processed
-	processed, err := p.db.IsEmailProcessed(ctx, email.MessageID)
+	alreadyProcessed, err := p.db.IsEmailProcessed(ctx, email.MessageID)
 	if err != nil {
-		return fmt.Errorf("failed to check if email is processed: %w", err)
+		return false, fmt.Errorf("failed to check if email is processed: %w", err)
 	}
 
-	if processed {
+	if alreadyProcessed {
 		p.logger.Debug("Email already processed, skipping",
 			zap.String("message_id", email.MessageID),
+			zap.String("from", email.From),
 			zap.String("subject", email.Subject))
-		return nil
+		return false, nil
 	}
 
 	p.logger.Info("Processing email",
@@ -263,7 +273,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 						zap.String("filename", attachment.Filename),
 						zap.String("provider", string(provider)),
 						zap.Error(err))
-					return fmt.Errorf("failed to parse disks from БРИНЕКС file: %w", err)
+					return false, fmt.Errorf("failed to parse disks from БРИНЕКС file: %w", err)
 				} else {
 					p.logger.Warn("Failed to parse disk section from price file (may not contain disks)",
 						zap.String("filename", attachment.Filename),
@@ -288,7 +298,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 				// БРИНЕКС file should always have disks
 				p.logger.Error("No disks found in БРИНЕКС file (should always have disks)",
 					zap.String("filename", attachment.Filename))
-				return fmt.Errorf("no disks found in БРИНЕКС file")
+				return false, fmt.Errorf("no disks found in БРИНЕКС file")
 			}
 
 		} else if fileType == parser.FileTypeDisk {
@@ -320,7 +330,7 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 			zap.String("subject", email.Subject),
 			zap.String("from", email.From))
 		// DO NOT mark as processed - we want to retry when parser is fixed
-		return fmt.Errorf("failed to extract any data from attachments")
+		return false, fmt.Errorf("failed to extract any data from attachments")
 	}
 
 	// Log sample data for debugging
@@ -395,16 +405,18 @@ func (p *Processor) processEmail(ctx context.Context, email imap.Email) error {
 	if err := p.db.InsertAllEmailDataWithTransaction(ctx, allRows, allTyreRows, allRimPriceRows, allRimNomenclatureRows, email.MessageID, email.Date); err != nil {
 		p.logger.Error("Failed to save email data (transaction rolled back)",
 			zap.String("message_id", email.MessageID),
+			zap.String("from", email.From),
 			zap.Error(err))
-		return fmt.Errorf("failed to save email data: %w", err)
+		return false, fmt.Errorf("failed to save email data: %w", err)
 	}
 
 	p.logger.Info("✅ Successfully processed email and saved ALL data atomically",
 		zap.String("message_id", email.MessageID),
+		zap.String("from", email.From),
 		zap.Int("nomenclature_rows", len(allRows)),
 		zap.Int("tyre_rows", len(allTyreRows)),
 		zap.Int("rim_price_rows", len(allRimPriceRows)),
 		zap.Int("rim_nomenclature_rows", len(allRimNomenclatureRows)))
 
-	return nil
+	return true, nil
 }
