@@ -117,7 +117,12 @@
       "Bash(PGPASSWORD='Poison-79' psql:*)",
       "Bash(PROJECT_STRUCTURE.md:*)",
       "Bash(/tmp/run_diagnostics.sh:*)",
-      "Bash(__NEW_LINE_46b56a84a2b184ad__ chmod +x /tmp/run_diagnostics.sh)"
+      "Bash(__NEW_LINE_46b56a84a2b184ad__ chmod +x /tmp/run_diagnostics.sh)",
+      "Bash(export PGSSLROOTCERT=$HOME/.cloud-certs/root.crt)",
+      "Bash(brew install:*)",
+      "Bash(~/.zshrc)",
+      "Bash(/opt/homebrew/opt/libpq/bin/psql:*)",
+      "Bash(PGSSLROOTCERT=$HOME/.cloud-certs/root.crt /opt/homebrew/opt/libpq/bin/psql:*)"
     ]
   }
 }
