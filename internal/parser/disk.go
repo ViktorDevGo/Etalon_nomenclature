@@ -347,7 +347,10 @@ func (p *DiskParser) findDiskColumns(cols []string) *diskColumnMapping {
 	}
 
 	for i, col := range cols {
-		normalized := strings.TrimSpace(strings.ToLower(col))
+		// Normalize: remove newlines and carriage returns, then trim and lowercase
+		normalized := strings.ReplaceAll(col, "\n", " ")
+		normalized = strings.ReplaceAll(normalized, "\r", " ")
+		normalized = strings.TrimSpace(strings.ToLower(normalized))
 
 		switch {
 		case strings.Contains(normalized, "артикул"):

@@ -239,7 +239,10 @@ func (p *PriceParser) findPriceColumns(cols []string, provider string) *priceCol
 		zap.String("provider", provider))
 
 	for i, col := range cols {
-		normalized := strings.TrimSpace(strings.ToLower(col))
+		// Normalize: remove newlines and carriage returns, then trim and lowercase
+		normalized := strings.ReplaceAll(col, "\n", " ")
+		normalized = strings.ReplaceAll(normalized, "\r", " ")
+		normalized = strings.TrimSpace(strings.ToLower(normalized))
 
 		switch {
 		case strings.Contains(normalized, "артикул"):
@@ -258,7 +261,10 @@ func (p *PriceParser) findPriceColumns(cols []string, provider string) *priceCol
 			if provider == string(ProviderBigMachine) {
 				// Extract store name from column header
 				// e.g., "Остаток Нск Северный" -> "Нск Северный"
-				storeName := strings.TrimSpace(strings.TrimPrefix(col, "Остаток"))
+				// Normalize newlines in original column name too
+				colNormalized := strings.ReplaceAll(col, "\n", " ")
+				colNormalized = strings.ReplaceAll(colNormalized, "\r", " ")
+				storeName := strings.TrimSpace(strings.TrimPrefix(colNormalized, "Остаток"))
 				if storeName == "" {
 					storeName = "Неизвестный склад"
 				}
