@@ -30,7 +30,7 @@ nano config.yaml
 - [ ] `database.ssl_root_cert` - путь к сертификату
 - [ ] `mailboxes[].email` - email ящики для мониторинга
 - [ ] `mailboxes[].password` - пароли от email
-- [ ] `poll_interval` - интервал проверки (по умолчанию 1m)
+- [ ] `poll_interval` - интервал проверки (по умолчанию 30m)
 
 #### .env (создать на сервере)
 

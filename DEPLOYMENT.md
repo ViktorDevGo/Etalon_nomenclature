@@ -146,7 +146,7 @@ nano config.yaml
 Заполните настройки:
 
 ```yaml
-poll_interval: 1m
+poll_interval: 30m
 
 database:
   dsn: "postgresql://gen_user:YOUR_PASSWORD@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=verify-full"

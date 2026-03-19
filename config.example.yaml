@@ -1,8 +1,8 @@
 # Etalon Nomenclature Service Configuration
 # Copy this file to config.yaml and fill in your actual values
 
-# How often to check for new emails
-poll_interval: 1m
+# How often to check for new emails (e.g., 1m, 5m, 30m, 1h)
+poll_interval: 30m
 
 # Database configuration
 database:

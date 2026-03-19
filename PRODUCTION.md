@@ -84,7 +84,7 @@ nano config.yaml
 **Минимальный config.yaml:**
 
 ```yaml
-poll_interval: 1m
+poll_interval: 30m
 
 database:
   dsn: "postgresql://gen_user:PASSWORD@c37e696087932476c61fd621.twc1.net:5432/default_db?sslmode=require"

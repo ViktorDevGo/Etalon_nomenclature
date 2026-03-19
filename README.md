@@ -67,7 +67,7 @@ docker compose logs -f app
 Минимальный `config.yaml`:
 
 ```yaml
-poll_interval: 1m
+poll_interval: 30m
 
 database:
   dsn: "postgresql://user:password@host:5432/db?sslmode=require"
